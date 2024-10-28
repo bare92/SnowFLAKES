@@ -18,6 +18,10 @@ import elevation
 import glob
 import pandas as pd
 from utilities import *
+import rasterio
+from pyproj import Transformer
+from datetime import timezone
+from pysolar.solar import *
 
 def create_auxiliary_folder(working_folder, folder_name = '01_TEST_auxiliary_folder'):
     """
@@ -560,6 +564,8 @@ def calc_slope_aspect(dem_path, auxiliary_folder_path, reproj_type='bilinear', o
     
     slopePath = os.path.join(auxiliary_folder_path, os.path.basename(dem_path).replace('_DEM.tif', '_slope.tif'))
     aspectPath = os.path.join(auxiliary_folder_path, os.path.basename(dem_path).replace('_DEM.tif', '_aspect.tif'))
+    
+    print(slopePath)
 
     ################### Calculate slope
     if os.path.exists(slopePath) and not overwrite:
@@ -579,13 +585,15 @@ def calc_slope_aspect(dem_path, auxiliary_folder_path, reproj_type='bilinear', o
 
     return slopePath, aspectPath
 
-def S2_clouds_classifier(stack_clouds_path, stack_fsc_path, cloud_prob, overwrite_cloud, average_over=2, dilation_size=3):
+def S2_clouds_classifier(stack_clouds_path, path_cloud_mask, ref_img_path, cloud_prob, overwrite_cloud = 0, average_over=2, dilation_size=3):
+    
+    from s2cloudless import S2PixelCloudDetector
     """
     Classifies clouds in a Sentinel-2 image.
 
     Args:
         stack_clouds_path: Path to the stack of cloud bands.
-        stack_fsc_path: Path to the stack of SCF bands.
+        ref_img_path: Path to the stack of SCF bands.
         cloud_prob: Cloud probability threshold.
         overwrite_cloud: Whether to overwrite the existing cloud mask.
         average_over: Size of the averaging window.
@@ -596,9 +604,8 @@ def S2_clouds_classifier(stack_clouds_path, stack_fsc_path, cloud_prob, overwrit
         cloud_cover_percentage: Cloud cover percentage.
     """
 
-    path_cloud_mask = stack_clouds_path[:-4] + '_Mask.tif'
    
-    temporary_cloud_mask_path = stack_clouds_path[:-4] + '_Mask_60m.tif'
+    temporary_cloud_mask_path = path_cloud_mask.replace('.tif', '60m.tif') 
     
     if not os.path.exists(temporary_cloud_mask_path):
         
@@ -625,7 +632,7 @@ def S2_clouds_classifier(stack_clouds_path, stack_fsc_path, cloud_prob, overwrit
 
     if not os.path.exists(path_cloud_mask) or overwrite_cloud==1:
         
-        tgt_img_info = open_image(stack_fsc_path)[1]
+        tgt_img_info = open_image(ref_img_path)[1]
         
         E_min = (tgt_img_info['extent'][0])
         N_min = (tgt_img_info['extent'][1])
@@ -654,16 +661,188 @@ def create_default_cloud_mask(shape, path):
     cloud_mask = np.zeros_like(shape) + 1
     save_image(cloud_mask, path, 'GTiff', 1, img_info['geotransform'], img_info['projection'])
     del cloud_mask   
+      
+def generate_no_data_mask(L_image, sensor, no_data_value=np.nan):
+    """
+    Generates a no-data mask for a given image based on the sensor.
+
+    Args:
+        L_image: The input image as a NumPy array.
+        sensor: The sensor type (e.g., "L5", "L7").
+        no_data_value: The value representing no data in the image.
+
+    Returns:
+        The generated no-data mask as a NumPy boolean array.
+    """
+
+    if np.isnan(no_data_value):
+        if sensor == "L5":
+            no_data_mask = (np.isnan(L_image[5, :, :]) | np.isnan(L_image[0, :, :])).astype(bool)
+        elif sensor == "L7":
+            no_data_mask = (np.isnan(L_image[0, :, :]) | np.isnan(L_image[np.max(np.shape(L_image)[0] - 1), :, :]) | np.isnan(L_image[6, :, :])).astype(bool)
+        else:
+            no_data_mask = (np.isnan(L_image[0, :, :]) | np.isnan(L_image[np.max(np.shape(L_image)[0] - 1), :, :])).astype(bool)
+    else:
+        # Handle other no-data values if needed
+        raise NotImplementedError("Handling of non-NaN no-data values is not implemented yet.")
+        
+    valid_mask = np.logical_not(no_data_mask)
+
+    return no_data_mask, valid_mask
     
+
+
     
+def spectral_idx_computer(B1, B2, idx_name, curr_image, no_data_mask, curr_aux_folder, sensor, output_filename, ref_img_path):
+    """
+    Computes a spectral index and saves the result in the specified folder.
     
+    Parameters
+    ----------
+    B1, B2 : numpy.ndarray
+        Input bands used to calculate the spectral index.
+        
+    idx_name : str
+        Name of the spectral index (e.g., 'NDSI', 'NDVI', 'shad_idx').
+        
+    curr_image : numpy.ndarray
+        Original 3D image data.
+        
+    no_data_mask : numpy.ndarray
+        Mask indicating no-data values.
+        
+    curr_aux_folder : str
+        Path to the folder where the output will be saved.
+        
+    sensor : str
+        Type of sensor.
+        
+    output_filename : str
+        Name of the output file.
+        
+    ref_img_path : str
+        Path to the reference image to obtain metadata.
     
+    Returns
+    -------
+    numpy.ndarray
+        Computed spectral index.
+    """
     
+    # Define the calculations for each index
+    calculations = {
+        'NDSI': lambda B1, B2: (B1 - B2) / (B1 + B2),
+        'NDVI': lambda B1, B2: (B1 - B2) / (B1 + B2),
+        'shad_idx': lambda B1, B2: B1 / np.linalg.norm(B2, axis=0)
+    }
     
+    # Check if the index name is in the dictionary
+    if idx_name not in calculations:
+        raise ValueError(f"Index '{idx_name}' is not supported.")
     
+    # Perform the calculation
+    idx_out = calculations[idx_name](B1, B2)
     
+    # Set the pixels corresponding to no_data_mask to invalid (e.g., np.nan)
+    idx_out[no_data_mask] = np.nan
     
+    # Save the computed band to a file in curr_aux_folder
+    output_path = os.path.join(curr_aux_folder, output_filename)
     
+    # Open the reference image to get metadata
+    with rasterio.open(ref_img_path) as src:
+        meta = src.meta.copy()
+        meta.update({
+            'driver': 'GTiff',
+            'height': idx_out.shape[0],
+            'width': idx_out.shape[1],
+            'count': 1,
+            'dtype': idx_out.dtype,
+            'nodata': np.nan
+        })
+        
+        # Write the spectral index to a new file
+        with rasterio.open(output_path, 'w', **meta) as dst:
+            dst.write(idx_out, 1)
+    
+    print(f"Spectral index {idx_name} saved at {output_path}")
+    return ;
+
+def solar_incidence_angle_calculator(curr_image_info, date_time, slopePath, aspectPath, curr_aux_folder, date):
+    """
+    Calculates the solar incidence angle based on slope, aspect, sun altitude, and azimuth.
+
+    Parameters
+    ----------
+    img_info : dict
+        Dictionary containing image metadata such as extent, geotransform, and EPSG code.
+
+    date_time : datetime
+        Date and time for which the solar position is calculated.
+
+    slope_path : str
+        Path to the slope GeoTIFF.
+
+    aspect_path : str
+        Path to the aspect GeoTIFF.
+
+    curr_aux_folder : str
+        Path to the folder where the solar incidence angle result will be saved.
+
+    Returns
+    -------
+    numpy.ndarray
+        Array representing the solar incidence angle.
+    """
+    # Extract image metadata
+    E_min, N_min, E_max, N_max = curr_image_info['extent']
+    epsg_code = curr_image_info['EPSG']
+
+    # Transform the coordinates to WGS84
+    transformer = Transformer.from_crs(f"epsg:{epsg_code}", "epsg:4326", always_xy=True)
+    central_E = E_min + (E_max - E_min) / 2
+    central_N = N_min + (N_max - N_min) / 2
+    Central_WGS84 = transformer.transform(central_E, central_N)
+
+    # Convert date_time to UTC timezone
+    datetime_object = date_time.replace(tzinfo=timezone.utc)
+
+    # Get sun altitude and azimuth
+    sun_altitude = get_altitude(Central_WGS84[1], Central_WGS84[0], datetime_object)
+    sun_azimuth = get_azimuth(Central_WGS84[1], Central_WGS84[0], datetime_object)
+
+    # Convert angles from degrees to radians
+    sun_zenith_rad = np.radians(90 - sun_altitude)
+    sun_azimuth_rad = np.radians(sun_azimuth)
+
+    # Read slope and aspect from the files
+    with rasterio.open(slopePath) as slope_ds, rasterio.open(aspectPath) as aspect_ds:
+        slope = slope_ds.read(1)
+        aspect = aspect_ds.read(1)
+        profile = slope_ds.profile
+
+    # Convert slope and aspect from degrees to radians
+    slope_rad = np.radians(slope)
+    aspect_rad = np.radians(aspect)
+
+    # Calculate the solar incidence angle
+    solar_incidence_angle = np.degrees(np.arccos(
+        np.cos(sun_zenith_rad) * np.cos(slope_rad) +
+        np.sin(sun_zenith_rad) * np.sin(slope_rad) * np.cos(aspect_rad - sun_azimuth_rad)
+    ))
+
+    # Set no-data areas (where slope is invalid) to NaN
+    solar_incidence_angle[np.isnan(slope)] = np.nan
+
+    # Save the solar incidence angle to a GeoTIFF in the curr_aux_folder
+    output_path = os.path.join(curr_aux_folder, date + '_solar_incidence_angle.tif')
+    profile.update(dtype=rasterio.float32, count=1, nodata=np.nan)
+
+    with rasterio.open(output_path, 'w', **profile) as dst:
+        dst.write(solar_incidence_angle.astype(np.float32), 1)
+
+    print(f"Solar incidence angle saved at {output_path}")
+    return solar_incidence_angle   
     
     
     

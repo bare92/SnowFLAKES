@@ -93,6 +93,51 @@ def get_sensor(acquisition_name):
     else:
         raise ValueError(f"Invalid acquisition name: {acquisition_name}")
 
+
+def define_bands(curr_image, valid_mask, sensor):
+    """
+    Extracts significant bands and generates stretched versions for a given sensor.
+
+    Parameters
+    ----------
+    L_image : numpy.ndarray
+        3D matrix of shape (bands, height, width) representing the spectral image.
+
+    valid_mask : numpy.ndarray
+        2D boolean matrix indicating valid pixels.
+
+    sensor : str
+        Sensor type ("S2", "L8", "L5", "L7", "L4").
+
+    Returns
+    -------
+    dict
+        Dictionary containing significant bands and stretched bands for GREEN and SWIR.
+    """
+    # Define band indices for different sensors
+    band_mapping = {
+        'L4': {'GREEN': 1, 'SWIR': 4, 'NIR': 3, 'RED': 2, 'BLUE': 0},
+        'L5': {'GREEN': 1, 'SWIR': 4, 'NIR': 3, 'RED': 2, 'BLUE': 0},
+        'L7': {'GREEN': 1, 'SWIR': 4, 'NIR': 3, 'RED': 2, 'BLUE': 0},
+        'L8': {'GREEN': 2, 'SWIR': 5, 'NIR': 4, 'RED': 3, 'BLUE': 1},
+        'S2': {'GREEN': 1, 'SWIR': 8, 'NIR': 7, 'RED': 2, 'BLUE': 0}
+    }
+    
+    # Check if the sensor is supported
+    if sensor not in band_mapping:
+        raise ValueError(f"Sensor '{sensor}' is not supported.")
+    
+    # Get band indices for the current sensor
+    indices = band_mapping[sensor]
+    
+    # Extract bands using the indices
+    bands = {name: curr_image[idx, :, :] for name, idx in indices.items()}
+    
+    # Perform Min-Max scaling on valid pixels
+    valid_bands = curr_image[:, valid_mask]
+    
+    return bands
+
 def create_vrt_files(L_acquisitions_filt, sensor, resolution):
     """
     Creates VRT files for each acquisition based on the sensor type.
@@ -101,8 +146,16 @@ def create_vrt_files(L_acquisitions_filt, sensor, resolution):
         if sensor == 'S2':
             create_vrt(elem, elem, 'cloud', resolution=resolution, overwrite=False)
             create_vrt(elem, elem, 'scf', resolution=resolution, overwrite=False)
+            
+        elif sensor == 'L8' or sensor == 'L9': 
+            
+            create_vrt(elem, elem, 'scf', resolution=resolution, overwrite=False)
+            create_vrt(elem, elem, 'scfT', resolution=resolution, overwrite=False)
+            create_vrt(elem, elem, 'cloud', resolution=resolution, overwrite=False)
+            
         else:
             create_vrt(elem, elem, 'scf', resolution=resolution, overwrite=False)
+            
 
 def create_vrt(folder, outfolder, suffix="scf", resolution=30, overwrite=False):
     """
@@ -133,8 +186,12 @@ def select_band_names(sensor, suffix):
     """
     if sensor in ['L4', 'L5', 'L7']:
         return ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7']
-    elif sensor == 'L8':
+    elif sensor == 'L8' and suffix == 'scf':
         return ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8']
+    elif sensor == 'L8' and suffix == 'scfT':
+        return ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B10', 'B11']
+    elif sensor == 'L8' and suffix == 'cloud':
+        return ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B10']
     elif sensor == 'S2' and suffix == 'cloud':
         return ['B01', 'B02', 'B04', 'B05', 'B08', 'B8A', 'B09', 'B10', 'B11', 'B12']
     elif sensor == 'S2' and suffix == 'scf':
@@ -179,6 +236,9 @@ def create_vrt_with_gdal(file_list, vrtname, resolution, band_name_list):
     for idx, band_name in enumerate(band_name_list, 1):
         VRT_dataset.GetRasterBand(idx).SetDescription(band_name)
     VRT_dataset = None
+
+
+
 
 def open_image(image_path,ncdf_layer='fsc'):
     """Opens an image and reads its metadata.
@@ -241,6 +301,9 @@ def open_image(image_path,ncdf_layer='fsc'):
         information['extent'] = extent
         information['X_Y_raster_size'] = X_Y_raster_size
         information['projection'] = proj
+        projection= osr.SpatialReference(wkt=image.GetProjection())
+        epsg_code = projection.GetAttrValue("AUTHORITY", 1) 
+        information['EPSG'] = epsg_code
         #print(cols,rows )
         image_output = np.array(image.ReadAsArray(0, 0,cols, rows))
         
@@ -249,6 +312,61 @@ def open_image(image_path,ncdf_layer='fsc'):
         return
         
     return image_output, information
+         
+def save_image (image_to_save, path_to_save, driver_name, datatype, geotransform, proj, NoDataValue=None):
+
+    '''
+    adfGeoTransform[0] / * top left x * /
+    adfGeoTransform[1] / * w - e pixel resolution * /
+    adfGeoTransform[2] / * rotation, 0 if image is "north up" * /
+    adfGeoTransform[3] / * top left y * /
+    adfGeoTransform[4] / * rotation, 0 if image is "north up" * /
+    adfGeoTransform[5] / * n - s pixel resolution * /
+    
+
+    enum  	GDALDataType {
+    GDT_Unknown = 0, GDT_Byte = 1, GDT_UInt16 = 2, GDT_Int16 = 3,
+    GDT_UInt32 = 4, GDT_Int32 = 5, GDT_Float32 = 6, GDT_Float64 = 7,
+    GDT_CInt16 = 8, GDT_CInt32 = 9, GDT_CFloat32 = 10, GDT_CFloat64 = 11,
+    GDT_TypeCount = 12}
+    '''
+  
+    driver = gdal.GetDriverByName(driver_name)
+
+    if len(np.shape(image_to_save)) == 2:
+        bands = 1
+        cols = np.shape(image_to_save)[1]
+        rows = np.shape(image_to_save)[0]
+
+    if len(np.shape(image_to_save)) > 2:
+        bands = np.shape(image_to_save)[0]
+        cols = np.shape(image_to_save)[2]
+        rows = np.shape(image_to_save)[1]
+
+    outDataset = driver.Create(path_to_save, cols, rows, bands, datatype)
+
+    outDataset.SetGeoTransform(geotransform)
+
+    if proj != None:
+        outDataset.SetProjection(proj)
+
+    if bands > 1:
+
+        for i in range(1, bands + 1):
+            outDataset.GetRasterBand(i).WriteArray(image_to_save[(i - 1), :, :], 0, 0)
+            if NoDataValue != None:
+                outDataset.GetRasterBand(i).SetNoDataValue(NoDataValue)
+
+    else:
+        outDataset.GetRasterBand(1).WriteArray(image_to_save, 0, 0)
+        if NoDataValue != None:
+                outDataset.GetRasterBand(1).SetNoDataValue(NoDataValue)
+        
+    outDataset = None
+
+    print('Image Saved')
+
+    return;
 
 def reproj_point(x, y, srIn, srOut):
     '''
@@ -284,8 +402,6 @@ def reproj_point(x, y, srIn, srOut):
     
     return (x,y)
  
-import numpy as np
-
 def subimages_definer(dim_img, max_dim=9000):
     """
     Determines the optimal number of subdivisions (nrow, ncol) required to ensure
@@ -419,6 +535,8 @@ def process_image(img_info, max_dim=9000):
     return subimage_extents
 
 def define_datetime(sensor,acquisition_name):
+    
+    from datetime import datetime
     '''
     Parameters
     ----------
@@ -468,4 +586,6 @@ def define_datetime(sensor,acquisition_name):
                    date_time = datetime.strptime(date + str(time), '%Y%m%d%H:%M:%S')
                    
     return date_time,date
+
+
 
