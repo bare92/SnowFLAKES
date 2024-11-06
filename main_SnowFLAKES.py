@@ -14,6 +14,8 @@ from auxiliary_folder_population import *
 from utilities import *
 import time
 import matplotlib.pyplot as plt
+from training_collection import *
+from SCF_functions import *
 
 def main():
    
@@ -182,6 +184,16 @@ def main():
             solar_incidence_angle = solar_incidence_angle_calculator(curr_image_info, date_time, slopePath, aspectPath, curr_aux_folder, date)
             
             ## Training Collection
+            
+            result, training_mask_path = collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, no_data_mask, bands)
+            
+            ## training
+            
+            svm_model_filename = model_training(curr_acquisition, training_mask_path, SVM_folder_name)
+            
+            ## SCF predict
+            
+            SCF_dist_SV(curr_acquisition, curr_aux_folder, auxiliary_folder_path, no_data_mask, svm_model_filename, Nprocesses=8)
             
             
             

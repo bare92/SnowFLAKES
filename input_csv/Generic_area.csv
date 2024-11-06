@@ -1,8 +1,8 @@
 Name,Value
-working_folder,/mnt/CEPH_PROJECTS/PROSNOW/GeoFrame/Venosta_20m
-Start Date,20220201
-End Date,20221001
-resolution,20
+working_folder,/mnt/CEPH_PROJECTS/PROSNOW/SENTINEL-2/32TPS/Reprojected_Senales_catchment
+Start Date,20220113
+End Date,20220113
+resolution,25
 window_size,10000
 ,
 External_water_mask,
@@ -11,13 +11,12 @@ External_glacier_mask,
 ,
 Compute_clouds,yes
 External_cloud_mask_folder,
-Overwrite_cloud,
-Shad treshold ,40
+Overwrite_cloud,0
 Cloud cover probability,0.6
 dilation_cloud_cover,6
 average_over,6
 ,
-SVM folder name,test_Flavia
+SVM_folder_name,test_new_SF
 NDSI snow pre class,0.5
 NDSI min to snow sun,0.7
 NDSI max to no snow sun,0

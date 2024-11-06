@@ -9,10 +9,17 @@ Created on Fri Oct 25 12:07:46 2024
 from utilities import *
 from sklearn.mixture import GaussianMixture
 from sklearn.preprocessing import StandardScaler
+from scipy.ndimage import binary_erosion
+import cv2
+from sklearn.cluster import KMeans
+from scipy.spatial import distance
+import rasterio
+import pandas as pd
+import matplotlib.pyplot as plt
 
-def read_masked_values(geotiff_path, mask, band = 1):
+def read_masked_values(geotiff_path, mask, bands=None):
     """
-    Reads the values of a GeoTIFF corresponding to a logical mask.
+    Reads the values of a multispectral GeoTIFF corresponding to a logical mask.
 
     Parameters
     ----------
@@ -20,22 +27,92 @@ def read_masked_values(geotiff_path, mask, band = 1):
         Path to the GeoTIFF file.
     mask : numpy.ndarray
         A 2D boolean mask (True where you want to keep values, False otherwise).
+    bands : list of int, optional
+        List of band indices to read (1-based index). If None, all bands are read.
 
     Returns
     -------
     masked_values : numpy.ndarray
-        Array of values corresponding to the True positions in the mask.
+        2D array of values where each row contains the pixel values across bands 
+        for locations where the mask is True.
     """
-    # Open the GeoTIFF file
     with rasterio.open(geotiff_path) as src:
-        # Read the data
-        data = src.read(band)  # Read the first band (change the index for other bands if needed)
+        # If bands are not specified, read all bands
+        if bands is None:
+            bands = list(range(1, src.count + 1))
+        
+        # List to store masked values for each band
+        masked_values_per_band = []
 
-        # Apply the mask to get only the values where mask is True
-        masked_values = data[mask]
+        for band in bands:
+            data = src.read(band)  # Read each specified band
+            masked_values_per_band.append(data[mask])  # Apply mask and store result
+
+        # Stack the results to create a 2D array with shape (num_pixels, num_bands)
+        masked_values = np.stack(masked_values_per_band, axis=-1)
 
     return masked_values
 
+
+def get_representative_pixels(bands_data, valid_mask, k=5, n_closest=5):
+    """
+    Selects representative "no snow" pixels by clustering and distance to cluster centroids.
+    Saves the output as a raster.
+
+    Parameters
+    ----------
+    bands_data : numpy.ndarray
+        3D array (bands, height, width) containing spectral data for each band.
+    valid_mask : numpy.ndarray
+        2D mask of valid pixels for selection.
+    NDSI_path : str
+        Path to the NDSI file for extracting the profile.
+    output_path : str
+        Path to save the representative pixels mask as a GeoTIFF.
+    k : int, optional
+        Number of clusters for K-means, by default 5.
+    n_closest : int, optional
+        Number of closest pixels to each centroid to select, by default 10.
+
+    Returns
+    -------
+    None
+    """
+
+    # Extract "no snow" pixels for clustering
+    no_snow_pixels = bands_data[valid_mask, :]  # Shape (pixels, bands)
+    
+    # Perform K-means clustering on "no snow" pixels
+    kmeans = KMeans(n_clusters=k, random_state=0)
+    kmeans.fit(no_snow_pixels)
+    
+    # Get cluster centroids and labels
+    labels = kmeans.labels_
+    centroids = kmeans.cluster_centers_
+
+   
+    representative_pixels_mask = np.zeros(valid_mask.shape, dtype='uint8')
+    
+    # Find the n_closest pixels to each centroid
+    for cluster_idx in range(k):
+        # Select pixels in the current cluster
+        cluster_pixels = no_snow_pixels[labels == cluster_idx]
+        
+        # Compute distances to the centroid for these pixels
+        distances = distance.cdist(cluster_pixels, [centroids[cluster_idx]], 'euclidean').flatten()
+        
+        # Get the indices of the n_closest pixels in the cluster
+        closest_indices = np.argsort(distances)[:n_closest]
+        
+        # Map the closest indices back to the original image coordinates
+        original_indices = np.argwhere(valid_mask)[labels == cluster_idx]
+        selected_pixels = original_indices[closest_indices]
+        
+        # Set these pixels in the representative mask
+       
+        representative_pixels_mask[selected_pixels] = 1
+
+    return representative_pixels_mask;
 
 def collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, no_data_mask, bands):
     
@@ -49,7 +126,9 @@ def collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, 
     
     bands_path = glob.glob(os.path.join(curr_acquisition, '*scf.vrt'))[0]
     
-    bands = define_bands(curr_image, valid_mask, sensor)
+    valid_mask = np.logical_not(no_data_mask)
+    
+    #bands = define_bands(bands_path, valid_mask, sensor)
     
     cloud_mask = open_image(path_cloud_mask)[0]
     water_mask = open_image(path_water_mask)[0]
@@ -58,9 +137,9 @@ def collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, 
     
     curr_scene_valid = np.logical_not(np.logical_or.reduce((cloud_mask == 2, water_mask == 1, no_data_mask)))
     
-    training_samples_df = pd.DataFrame(columns=['no_snow', 'snow', 'shadow', 'NDSI'])
-    
     ranges = ((0,20), (20, 45), (45, 70), (70, 90), (90, 180))
+    
+    empty = np.zeros(curr_scene_valid.shape, dtype='uint8')
     
     for curr_range in ranges:
     
@@ -70,56 +149,74 @@ def collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, 
         
         curr_NDVI = read_masked_values(NDVI_path, curr_angle_valid)
         
-        curr_green = read_masked_values(bands_path, curr_angle_valid, band = 2)
+        curr_green = read_masked_values(bands_path, curr_angle_valid, bands = [2])
+        
+        curr_bands = read_masked_values(bands_path, curr_angle_valid)
     
-        plt.hist(curr_green, bins=100, alpha=0.5, label= str(curr_range))
+        # Calculate a custom score to find the pixels with highest NDSI, lowest NDVI, and highest green
+        curr_score_snow_sun = curr_NDSI - curr_NDVI + curr_green
+               
+        ## provo con diff blu verde per pixel ombra
         
-        features = np.stack([curr_NDSI, curr_NDVI, curr_green], axis=-1)
+        # Sort or threshold based on the score to get the most representative pixels
+        threshold = np.percentile(curr_score_snow_sun, 95)  # Adjust the percentile as needed to select top 5%
+        curr_valid_snow_mask = (curr_score_snow_sun >= threshold).flatten()
         
-        scaler = StandardScaler()
-        features_scaled = scaler.fit_transform(features)
         
-        n_components = 3  # Number of clusters, adjust as needed
-        gmm = GaussianMixture(n_components=n_components, random_state=0)
-        gmm_labels = gmm.fit_predict(features_scaled)
+        representative_pixels_mask_snow = get_representative_pixels(curr_bands, curr_valid_snow_mask, k=5, n_closest=10)
         
-        cluster_means = []
-        for cluster in range(n_components):
-            cluster_data = features[gmm_labels == cluster]
-            mean_ndsi = cluster_data[:, 0].mean()
-            mean_ndvi = cluster_data[:, 1].mean()
-            mean_green = cluster_data[:, 2].mean()
-            cluster_means.append((mean_ndsi, mean_ndvi, mean_green))
+        plt.hist(curr_score_snow_sun, bins=50, alpha=0.5, label=str(curr_range) + str(threshold))
+        plt.legend()
+        
+       
+        ## NO snow
+        
+        curr_valid_no_snow_mask = (curr_NDSI < 0).flatten()
+        
+        representative_pixels_mask_noSnow = get_representative_pixels(curr_bands, curr_valid_no_snow_mask, k=5, n_closest=10) * 2
+        
+        representative_pixels_mask = representative_pixels_mask_noSnow + representative_pixels_mask_snow
+        
+        empty[curr_angle_valid] = representative_pixels_mask
+        
+    # Erode the mask by one pixel where empty == 1
+            
+    # Create a binary mask for areas where empty == 1
+    mask_one = (empty == 1)
+  
+    # Apply binary erosion on the mask
+    #eroded_mask = binary_erosion(mask_one,  iterations=1)
+  
+    # Create a copy of the original array to store the result
+    result = empty.copy()
+  
+    # Update result where `empty` was originally 1, setting eroded areas to 1, else to 0
+    #result[mask_one] = eroded_mask[mask_one].astype(empty.dtype)
 
-        # Select the cluster that maximizes NDSI and green reflectance, and minimizes NDVI
-        selected_cluster = np.argmax([ndsi - ndvi + green for ndsi, ndvi, green in cluster_means])
-        
-        # Step 5: Create a mask for the selected cluster
-        selected_mask = (gmm_labels == selected_cluster)
-        
-        empty = np.zeros(curr_angle_valid.shape)
-        empty[curr_angle_valid] = gmm_labels + 1
-        
-        output_path = os.path.join(curr_aux_folder, 'clusters_for_endmember.tif')
-        
-        # Use the profile from one of the input rasters (e.g., NDSI) for metadata
-        with rasterio.open(NDSI_path) as src:
-            profile = src.profile
-        
-        # Update the profile for the output raster
-        profile.update(dtype='uint8', count=1, compress='lzw', nodata=0)
-        
-        # Save the selected mask as a new GeoTIFF file with 0 as nodata
-        with rasterio.open(output_path, 'w', **profile) as dst:
-            dst.write(empty.astype('uint8'), 1)
-        
-        plt.figure()
-        plt.imshow(empty)
     
-    plt.legend()
+    training_mask_path = os.path.join(curr_aux_folder, 'representative_pixels_for_training_samples.tif')
     
+    # Update the profile and save the representative mask
+    with rasterio.open(NDSI_path) as src:
+        profile = src.profile
+    profile.update(dtype='uint8', count=1, compress='lzw', nodata=0)
     
-
-
+    with rasterio.open(training_mask_path, 'w', **profile) as dst:
+        dst.write(result, 1)
+        
+    return result, training_mask_path;
+        
+ 
+    
+ 
+    
+ 
+    
+ 
+    
+ 
+    
+ 
+    
 
 
