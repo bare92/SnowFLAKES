@@ -173,12 +173,20 @@ def main():
             ## save spectral indexes
             valid_mask = np.logical_not(no_data_mask)
             bands = define_bands(curr_image, valid_mask, sensor)
+            
             # NDVI
             spectral_idx_computer(bands['NIR'], bands['RED'], 'NDVI', curr_image, no_data_mask, curr_aux_folder, sensor, sensor + '_' + date + '_NDVI.tif', curr_band_stack_path)
             
             # NDSI
             spectral_idx_computer(bands['GREEN'], bands['SWIR'], 'NDSI', curr_image, no_data_mask, curr_aux_folder, sensor, sensor + '_' + date + '_NDSI.tif', curr_band_stack_path)
             
+            # band difference
+            spectral_idx_computer(bands['BLUE'], bands['NIR'], 'band_diff', curr_image, no_data_mask, curr_aux_folder, sensor, sensor + '_' + date + '_diffBNIR.tif', curr_band_stack_path)
+            
+            # Shadow index
+            
+            spectral_idx_computer(bands['GREEN'], bands['SWIR'], 'shad_idx', curr_image, no_data_mask, curr_aux_folder, sensor, sensor + '_' + date + '_shad_idx.tif', curr_band_stack_path)
+        
             # solar incidence angle
             
             solar_incidence_angle = solar_incidence_angle_calculator(curr_image_info, date_time, slopePath, aspectPath, curr_aux_folder, date)

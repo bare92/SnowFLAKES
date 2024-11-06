@@ -733,7 +733,8 @@ def spectral_idx_computer(B1, B2, idx_name, curr_image, no_data_mask, curr_aux_f
     calculations = {
         'NDSI': lambda B1, B2: (B1 - B2) / (B1 + B2),
         'NDVI': lambda B1, B2: (B1 - B2) / (B1 + B2),
-        'shad_idx': lambda B1, B2: B1 / np.linalg.norm(B2, axis=0)
+        'shad_idx': lambda B1, B2:  (B1 - B2) / (B1 + B2) / B1,
+        'band_diff': lambda B1, B2: B1-B2
     }
     
     # Check if the index name is in the dictionary

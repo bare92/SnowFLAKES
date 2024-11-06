@@ -1,70 +1,70 @@
-Name,Value
-working_folder,/mnt/CEPH_PROJECTS/PROSNOW/SENTINEL-2/32TPS/Reprojected_Senales_catchment
-Start Date,20220113
-End Date,20220113
-resolution,25
-window_size,10000
-,
-External_water_mask,
-External_Dem_path,
-External_glacier_mask,
-,
-Compute_clouds,yes
-External_cloud_mask_folder,
-Overwrite_cloud,0
-Cloud cover probability,0.6
-dilation_cloud_cover,6
-average_over,6
-,
-SVM_folder_name,test_new_SF
-NDSI snow pre class,0.5
-NDSI min to snow sun,0.7
-NDSI max to no snow sun,0
-NDSI_str min to snow shadow,0.7
-NDSI_str max to no snow shadow,-0.3
-GREEN upper snow,1.1
-GREEN lower snow,0.4
-NDSIR,3
-shadow_index_threshold,2.8
-,
-,
-,
-,
-,
-,
-,
-,
-,
-Predefined_SVM_model,/mnt/CEPH_PROJECTS/ALPSNOW/Nicola/SCF_code/S2/SVM_SNOW_SUPERMODEL_2.p
-Predefined_SVM_model_sun,/mnt/CEPH_PROJECTS/ALPSNOW/Nicola/SCF_code/S2/Sun/S2_winter_sun_model.p
-Predefined_SVM_model_shadow,/mnt/CEPH_PROJECTS/ALPSNOW/Nicola/SCF_code/S2/SVM_SNOW_SUPERMODEL_2.p
-,
-,
-,
-,
-,
-,
-remove_bad_dates,yes
-remove_cloud_treshold,0.8
-remove_no_data_percentage_trehsold,0.8
-remove_clud_perc_corr_trehsold,0.8
-No data percentage,0.8
-,
-Predefined_model,yes
-separated_model,no
-prefilter_trainin,yes
-,
-n_min,2
-n_max,10
-Min training class,5
-Nprocess,8
-,
-overwrite,no
-Ancillary_folder,yes
-Extended_Output,no
-NCDF,no
-QL_genaration,no
-combined_vrt,no
-Correction,yes
-Quantification,0
-Glacier_flag,yes
+Name,Value,,
+working_folder,/mnt/CEPH_PROJECTS/PROSNOW/SENTINEL-2/32TPS/Reprojected_Senales_catchment,,
+Start Date,20230403,,20220113
+End Date,20230403,,
+resolution,25,,
+window_size,10000,,
+,,,
+External_water_mask,,,
+External_Dem_path,,,
+External_glacier_mask,,,
+,,,
+Compute_clouds,yes,,
+External_cloud_mask_folder,,,
+Overwrite_cloud,0,,
+Cloud cover probability,0.6,,
+dilation_cloud_cover,6,,
+average_over,6,,
+,,,
+SVM_folder_name,test_new_SFv2,,
+NDSI snow pre class,0.5,,
+NDSI min to snow sun,0.7,,
+NDSI max to no snow sun,0,,
+NDSI_str min to snow shadow,0.7,,
+NDSI_str max to no snow shadow,-0.3,,
+GREEN upper snow,1.1,,
+GREEN lower snow,0.4,,
+NDSIR,3,,
+shadow_index_threshold,2.8,,
+,,,
+,,,
+,,,
+,,,
+,,,
+,,,
+,,,
+,,,
+,,,
+Predefined_SVM_model,/mnt/CEPH_PROJECTS/ALPSNOW/Nicola/SCF_code/S2/SVM_SNOW_SUPERMODEL_2.p,,
+Predefined_SVM_model_sun,/mnt/CEPH_PROJECTS/ALPSNOW/Nicola/SCF_code/S2/Sun/S2_winter_sun_model.p,,
+Predefined_SVM_model_shadow,/mnt/CEPH_PROJECTS/ALPSNOW/Nicola/SCF_code/S2/SVM_SNOW_SUPERMODEL_2.p,,
+,,,
+,,,
+,,,
+,,,
+,,,
+,,,
+remove_bad_dates,yes,,
+remove_cloud_treshold,0.8,,
+remove_no_data_percentage_trehsold,0.8,,
+remove_clud_perc_corr_trehsold,0.8,,
+No data percentage,0.8,,
+,,,
+Predefined_model,yes,,
+separated_model,no,,
+prefilter_trainin,yes,,
+,,,
+n_min,2,,
+n_max,10,,
+Min training class,5,,
+Nprocess,8,,
+,,,
+overwrite,no,,
+Ancillary_folder,yes,,
+Extended_Output,no,,
+NCDF,no,,
+QL_genaration,no,,
+combined_vrt,no,,
+Correction,yes,,
+Quantification,0,,
+Glacier_flag,yes,,
