@@ -1,8 +1,8 @@
 Name,Value,,
-working_folder,/mnt/CEPH_PROJECTS/PROSNOW/SENTINEL-2/32TPS/Reprojected_Senales_catchment,,
-Start Date,20220113,,20220113
-End Date,20220113,,
-resolution,25,,
+working_folder,/mnt/CEPH_PROJECTS/SNOWCOP/Glaciers/Azufre/calibrated,,
+Start Date,20150101,,20220113
+End Date,20250101,,
+resolution,20,,
 ,,,
 External_water_mask,,,
 External_Dem_path,,,

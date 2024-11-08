@@ -10,6 +10,7 @@ from osgeo import gdal, ogr, osr
 import netCDF4
 import numpy as np
 import glob
+import rasterio
 
 
 def data_filter(start_date, end_date, working_folder, sensor):
@@ -237,9 +238,6 @@ def create_vrt_with_gdal(file_list, vrtname, resolution, band_name_list):
         VRT_dataset.GetRasterBand(idx).SetDescription(band_name)
     VRT_dataset = None
 
-
-
-
 def open_image(image_path,ncdf_layer='fsc'):
     """Opens an image and reads its metadata.
     
@@ -302,7 +300,8 @@ def open_image(image_path,ncdf_layer='fsc'):
         information['X_Y_raster_size'] = X_Y_raster_size
         information['projection'] = proj
         projection= osr.SpatialReference(wkt=image.GetProjection())
-        epsg_code = projection.GetAttrValue("AUTHORITY", 1) 
+        with rasterio.open(image_path, 'r+') as rds:
+            epsg_code = str(rds.crs).split(':')[1]
         information['EPSG'] = epsg_code
         #print(cols,rows )
         image_output = np.array(image.ReadAsArray(0, 0,cols, rows))
@@ -525,7 +524,7 @@ def process_image(img_info, max_dim=9000):
     print(f"Adjusted dimensions: {x} x {y} (extra rows: {del_row}, extra cols: {del_col})")
     
     # Step 2: Calculate the extents for each subimage
-    resolution = img_info['geotransform'][0]
+    resolution = img_info['geotransform'][1]
     subimage_extents = extent_cutter(img_info, nrow, ncol, resolution, x, y)
     
     print("Subimage extents calculated:")

@@ -22,6 +22,8 @@ import rasterio
 from pyproj import Transformer
 from datetime import timezone
 from pysolar.solar import *
+from rasterio.crs import CRS
+from pyproj import Transformer
 
 def create_auxiliary_folder(working_folder, folder_name = '01_TEST_auxiliary_folder'):
     """
@@ -77,9 +79,8 @@ def water_identifier(ref_img_path,auxiliary_folder_path):
     if not os.path.exists(target_wb_mask_path):
         dim_img=open_image(ref_img_path)[1]
         
-        d = gdal.Open(ref_img_path)
-        proj = osr.SpatialReference(wkt=d.GetProjection())
-        epsg_code = proj.GetAttrValue("AUTHORITY", 1)   
+        with rasterio.open(ref_img_path, 'r+') as rds:
+            epsg_code = str(rds.crs).split(':')[1]
         
         resolution=dim_img['geotransform'][1]
         E_min=dim_img["extent"][0]
@@ -87,18 +88,28 @@ def water_identifier(ref_img_path,auxiliary_folder_path):
         E_max=dim_img["extent"][2]
         N_max=dim_img["extent"][3]
         
-        if epsg_code!="4326":
-            srIn = osr.SpatialReference(str(dim_img['projection']))
-            file=glob.glob("/mnt/CEPH_BASEDATA/GIS/WORLD/WATER/Global_water_mask/*")[0]
-            d_target = open_image(file)[1]
-            srOut = osr.SpatialReference(str(d_target['projection']))
-            E_min_old=dim_img["extent"][0]
-            N_min_old=dim_img["extent"][1]
-            E_max_old=dim_img["extent"][2]
-            N_max_old=dim_img["extent"][3]
-            (N_min, E_min) = reproj_point(E_min_old, N_min_old, srIn, srOut)
-            (N_max, E_max) = reproj_point(E_max_old, N_max_old, srIn, srOut)
-            resolution=resolution/100000
+      
+        if epsg_code != "4326":
+            # Open the reference image to get its CRS and extent
+            with rasterio.open(ref_img_path) as src:
+                srIn = src.crs  # Reference image CRS
+                E_min_old, N_min_old, E_max_old, N_max_old = src.bounds  # Original bounds in source CRS
+                resolution = src.res[0]  # Assumes square pixels for resolution
+        
+            # Get the target CRS from the water mask file
+            water_mask_file = glob.glob("/mnt/CEPH_BASEDATA/GIS/WORLD/WATER/Global_water_mask/*")[0]
+            with rasterio.open(water_mask_file) as d_target:
+                srOut = d_target.crs  # Water mask CRS
+        
+            # Set up the transformation between the two coordinate reference systems (CRS)
+            transformer = Transformer.from_crs(srIn, srOut, always_xy=True)
+        
+            # Reproject the bounds from the source CRS (reference image) to the target CRS (water mask)
+            E_min, N_min = transformer.transform(E_min_old, N_min_old)
+            E_max, N_max = transformer.transform(E_max_old, N_max_old)
+        
+            # Adjust the resolution scale if needed
+            resolution /= 100000
                     
         V1=(int(np.floor(E_min/10)*10),int(np.ceil(N_min/10)*10))
         V2=(int(np.floor(E_min/10)*10),int(np.ceil(N_max/10)*10))
@@ -191,7 +202,7 @@ def water_mask_cutting(water_mask_path, ref_img_path,auxiliary_folder_path):
 
 
     '''
-    if Ancillary_folder:
+    if auxiliary_folder_path != None:
         target_wb_mask_path = auxiliary_folder_path+os.sep+os.path.basename(os.path.dirname( os.path.dirname(ref_img_path)))+ "_Water_Mask.tif"  
     else:
         target_wb_mask_path = ref_img_path[:-8] + "_Water_Mask.tif"  
@@ -202,8 +213,8 @@ def water_mask_cutting(water_mask_path, ref_img_path,auxiliary_folder_path):
         img_info = open_image(ref_img_path)[1]
     
         d = gdal.Open(ref_img_path)
-        proj = osr.SpatialReference(wkt=d.GetProjection())
-        epsg_code_ref = proj.GetAttrValue("AUTHORITY", 1)
+        with rasterio.open(ref_img_path, 'r+') as rds:
+            epsg_code_ref = str(rds.crs).split(':')[1]
             
         E_min = (img_info['extent'][0])
         N_min = (img_info['extent'][1])
@@ -302,8 +313,8 @@ def glacier_mask_automatic(water_mask_path):
         E_min, N_min, E_max, N_max = img_info['extent']
     else:
         srIn = osr.SpatialReference(str(img_info['projection']))
-        global_water_mask = glob.glob("/mnt/CEPH_BASEDATA/GIS/WORLD/WATER/Global_water_mask/*")[0]
-        srOut = osr.SpatialReference(str(open_image(global_water_mask)[1]['projection']))
+       
+        srOut = osr.SpatialReference(str(open_image(water_mask_path)[1]['projection']))
         
         E_min_meter, N_min_meter, E_max_meter, N_max_meter = img_info['extent']
         N_min, E_min = reproj_point(E_min_meter, N_min_meter, srIn, srOut)
@@ -368,7 +379,6 @@ def dem_downloader(sub_areas, ref_img_path, resolution, auxiliary_folder_path, b
     Downloads and mosaics a DEM (Digital Elevation Model) for a given set of sub-areas. If a DEM
     already exists, the function skips downloading. If not, it downloads the DEM, reprojects, and
     mosaics the sub-areas into one file.
-
     Parameters
     ----------
     sub_areas : list of tuples
@@ -381,7 +391,6 @@ def dem_downloader(sub_areas, ref_img_path, resolution, auxiliary_folder_path, b
         If True, saves files in an auxiliary_folder_path. Defaults to False.
     buffer : float, optional
         Buffer to add around the DEM download area. Defaults to 0.02.
-
     Returns
     -------
     final_dem : str
@@ -397,19 +406,16 @@ def dem_downloader(sub_areas, ref_img_path, resolution, auxiliary_folder_path, b
     
     # Read the reference VRT file and extract projection and extent info
     area_info = open_image(ref_img_path)[1]  # Function open_image assumed to return metadata
-    d = gdal.Open(ref_img_path)
-    proj = osr.SpatialReference(wkt=d.GetProjection())
-    epsg_code = proj.GetAttrValue("AUTHORITY", 1)  # Extract EPSG code
-
+    with rasterio.open(ref_img_path, 'r+') as rds:
+        epsg_code = str(rds.crs).split(':')[1]
+        
     # If DEM doesn't already exist, start the downloading process
     if not os.path.exists(final_dem):
         for idx, sub_area in enumerate(sub_areas):
-            
-            
+                        
             temp_file = os.path.join(auxiliary_folder_path, f"dem_temp{idx}.tif")
             output_file = os.path.join(auxiliary_folder_path, f"dem_{idx}.tif")
            
-
             # If output file for the sub-area doesn't already exist, download and process the DEM
             if not os.path.exists(output_file):
                 
@@ -418,15 +424,17 @@ def dem_downloader(sub_areas, ref_img_path, resolution, auxiliary_folder_path, b
                 else:
                     # Reproject the bounding box if not in WGS 84
                     srIn = osr.SpatialReference(str(area_info['projection']))
-                    file = glob.glob("/mnt/CEPH_BASEDATA/GIS/WORLD/WATER/Global_water_mask/*")[0]
-                    d_target = open_image(file)[1]
-                    srOut = osr.SpatialReference(str(d_target['projection']))
 
+                    # Directly assign EPSG 4326 to srOut
+                    srOut = osr.SpatialReference()
+                    srOut.ImportFromEPSG(4326)
+                    
                     # Reproject the extents from the input area
                     (min_lat, min_lon) = reproj_point(area_info["extent"][0], area_info["extent"][1], srIn, srOut)
                     (max_lat, max_lon) = reproj_point(area_info["extent"][2], area_info["extent"][3], srIn, srOut)
+                    
                     resolution /= 100000  # Adjust resolution to match the projection
-
+                    
                 # Download the DEM with a buffer around the bounding box
                 if not os.path.exists(temp_file):
                     elevation.clip(bounds=(min_lon - buffer, min_lat - buffer, max_lon + buffer, max_lat + buffer), output=temp_file)
@@ -440,7 +448,6 @@ def dem_downloader(sub_areas, ref_img_path, resolution, auxiliary_folder_path, b
                         E_min_old, N_min_old, E_max_old, N_max_old = area_info["extent"]
                         cmd = f'gdalwarp -t_srs EPSG:{epsg_code} -te {E_min_old} {N_min_old} {E_max_old} {N_max_old} ' \
                               f'-r bilinear -tr {resolution * 100000} {resolution * 100000} {temp_file} {output_file}'
-
                     # Run the command and remove temporary files
                     os.system(cmd)
                     os.remove(temp_file)
@@ -461,7 +468,6 @@ def dem_downloader(sub_areas, ref_img_path, resolution, auxiliary_folder_path, b
             
             # Save the smoothed DEM
             save_image(smoothed_dem_data, final_dem, 'GTiff', 6, dem_info['geotransform'], dem_info['projection'])
-
             # Clean up intermediate files
             for file in files_to_mosaic:
                 os.remove(file)
@@ -473,7 +479,6 @@ def dem_downloader(sub_areas, ref_img_path, resolution, auxiliary_folder_path, b
         print("DEM already exists.")
     
     return final_dem
-
 def crop_predefined_DEM(ref_img_path, External_Dem_path, auxiliary_folder_path, reproj_type='bilinear', overwrite=False):
     """
     Crop a predefined DEM to match the spatial extent of a reference image and save it to the auxiliary folder.
@@ -769,6 +774,7 @@ def spectral_idx_computer(B1, B2, idx_name, curr_image, no_data_mask, curr_aux_f
     print(f"Spectral index {idx_name} saved at {output_path}")
     return ;
 
+
 def solar_incidence_angle_calculator(curr_image_info, date_time, slopePath, aspectPath, curr_aux_folder, date):
     """
     Calculates the solar incidence angle based on slope, aspect, sun altitude, and azimuth.
@@ -843,9 +849,7 @@ def solar_incidence_angle_calculator(curr_image_info, date_time, slopePath, aspe
         dst.write(solar_incidence_angle.astype(np.float32), 1)
 
     print(f"Solar incidence angle saved at {output_path}")
-    return solar_incidence_angle   
-    
-    
+    return solar_incidence_angle      
     
     
     
