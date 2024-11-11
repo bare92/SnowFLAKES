@@ -47,6 +47,14 @@ def data_filter(start_date, end_date, working_folder, sensor):
                  start_date <= os.path.basename(f).split('_')[7][1:].split('T')[0] <= end_date)
             )
         ]
+        
+    elif sensor == 'PRISMA':
+        
+        acquisitions = sorted(glob.glob(os.path.join(working_folder, 'PRS*')))
+        acquisitions_filtered = [
+            f for f in acquisitions
+            if start_date <= os.path.basename(f).split('_')[4][:-6] <= end_date
+        ]
     
     # Filter for Landsat (L8, L7, etc.)
     else:
@@ -91,6 +99,8 @@ def get_sensor(acquisition_name):
         return 'L8'
     elif 'S2' in acquisition_name:
         return 'S2'
+    elif 'PRS' in acquisition_name:
+        return 'PRISMA'
     else:
         raise ValueError(f"Invalid acquisition name: {acquisition_name}")
 
@@ -121,7 +131,8 @@ def define_bands(curr_image, valid_mask, sensor):
         'L5': {'GREEN': 1, 'SWIR': 4, 'NIR': 3, 'RED': 2, 'BLUE': 0},
         'L7': {'GREEN': 1, 'SWIR': 4, 'NIR': 3, 'RED': 2, 'BLUE': 0},
         'L8': {'GREEN': 2, 'SWIR': 5, 'NIR': 4, 'RED': 3, 'BLUE': 1},
-        'S2': {'GREEN': 1, 'SWIR': 8, 'NIR': 7, 'RED': 2, 'BLUE': 0}
+        'S2': {'GREEN': 1, 'SWIR': 8, 'NIR': 7, 'RED': 2, 'BLUE': 0},
+        'PRISMA': {'GREEN': 19, 'SWIR': 122, 'NIR': 46, 'RED': 36, 'BLUE': 9}
     }
     
     # Check if the sensor is supported
@@ -561,6 +572,13 @@ def define_datetime(sensor,acquisition_name):
     elif sensor == 'S2' and os.path.basename(acquisition_name).split('_')[1] == 'OPER':
        
        date = os.path.basename(acquisition_name).split('_')[7][1:].split('T')[0]
+       
+    elif sensor == 'PRISMA':
+       
+       date = os.path.basename(acquisition_name).split('_')[4][:-6]
+       date_time_str = os.path.basename(acquisition_name).split('_')[4]
+       date_time = datetime.strptime(date_time_str, '%Y%m%d%H%M%S')
+       
        
     else:  
        

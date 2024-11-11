@@ -1,8 +1,9 @@
 Name,Value,,
-working_folder,/mnt/CEPH_PROJECTS/ALPSNOW/VHR/01_Val_d_Isere/02_VHR_footprint_20m,,
-Start Date,20201125,,20220113
-End Date,20201125,,
-resolution,20,,
+working_folder,/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/HYPERSPECTRAL/Prisma_SCF,,
+Start Date,20240704,,20220113
+End Date,20240704,,
+resolution,30,,
+no_data_value,0,,
 ,,,
 External_water_mask,,,
 External_Dem_path,,,

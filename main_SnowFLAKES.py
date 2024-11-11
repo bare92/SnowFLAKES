@@ -22,7 +22,8 @@ def main():
     # Define the path to the CSV file containing input parameters
     #csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/Azufre.csv')
     #csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/Generic_area.csv')
-    csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/sierra_nevada.csv')
+    #csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/sierra_nevada.csv')
+    csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/prisma_test.csv')
     
     input_data = pd.read_csv(csv_path)
 
@@ -31,10 +32,10 @@ def main():
 
     # Step 2: Check satellite mission based on acquisition name
     print("Checking satellite mission...")
-    acquisitions = os.listdir(working_folder)
+    acquisitions = sorted(os.listdir(working_folder))
     if not acquisitions:
         raise ValueError("No acquisitions found in the working folder.")
-    acquisition_name = acquisitions[0]  # Use the first acquisition as a representative sample
+    acquisition_name = acquisitions[-1]  # Use the first acquisition as a representative sample
     sensor = get_sensor(acquisition_name)
     
     # Step 3: Create auxiliary folder for storing permanent layers
@@ -53,15 +54,26 @@ def main():
     # Step 5: Retrieve the spatial resolution parameter
     resolution = float(get_input_param(input_data, 'resolution'))
     print(f"Using resolution: {resolution}.")
+    
+    # Step 5: Retrieve no data value
+    no_data_value = float(get_input_param(input_data, 'no_data_value'))
+    print(f"no data value: {no_data_value}.")
 
     # Step 6: Generate VRT (Virtual Raster Table) files with stacked bands for selected acquisitions
     print("Creating VRT files...")
-    create_vrt_files(acquisitions_filtered, sensor, resolution)
-    print("VRT creation process completed.")
+    
+    if sensor != 'PRISMA':
+        create_vrt_files(acquisitions_filtered, sensor, resolution)
+        ref_img_path = glob.glob(acquisitions_filtered[0] + os.sep + "*scf.vrt")[0]
+        print("VRT creation process completed.")
+    if sensor == 'PRISMA':
+        
+        ref_img_path = glob.glob(acquisitions_filtered[0] + os.sep + "PRS*.tif")[0]
+        
     
     # Step 7: Generate water mask
     print("Generating water mask...")
-    ref_img_path = glob.glob(acquisitions_filtered[0] + os.sep + "*scf.vrt")[0]
+    
     vrt, img_info = open_image(ref_img_path)
 
     # Check if an external water mask is provided, else generate a default water mask
@@ -147,8 +159,9 @@ def main():
                 del cloud_mask
             
         # Handle no-data mask
-        curr_band_stack_path = glob.glob(os.path.join(curr_acquisition, '*scf.vrt'))[0]
+        curr_band_stack_path = ref_img_path
         curr_image, curr_image_info = open_image(curr_band_stack_path)
+        curr_image[curr_image == no_data_value] = np.nan
         no_data_mask, valid_mask = generate_no_data_mask(curr_image, sensor, no_data_value=np.nan)
         no_data_percentage = np.sum(no_data_mask) / (curr_image_info['X_Y_raster_size'][0] * curr_image_info['X_Y_raster_size'][1])
         cloud_perc_corr = cloud_cover_percentage / (1 - no_data_percentage)
@@ -166,12 +179,32 @@ def main():
         solar_incidence_angle = solar_incidence_angle_calculator(curr_image_info, date_time, slopePath, aspectPath, curr_aux_folder, date)
         
         # Step 10: Collect training data and train the SVM model
-        result, training_mask_path = collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, SVM_folder_name, no_data_mask, bands)
-        svm_model_filename = model_training(curr_acquisition, training_mask_path, SVM_folder_name)
+        shapefile_path, training_mask_path = collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, SVM_folder_name, no_data_mask, bands)
         
-        # Step 11: Run SCF prediction
-        SCF_dist_SV(curr_acquisition, curr_aux_folder, auxiliary_folder_path, no_data_mask, svm_model_filename, Nprocesses=8)
- 
+        while True:
+            
+            print('TRAINING')
+            svm_model_filename = model_training(curr_acquisition, shapefile_path, SVM_folder_name, gamma = None)
+            
+            # Step 11: Run SCF prediction
+            FSC_SVM_map_path = SCF_dist_SV(curr_acquisition, curr_aux_folder, auxiliary_folder_path, no_data_mask, svm_model_filename, Nprocesses=8, overwrite=True)
+            
+            # Step 12: Result check
+            shapefile_path = check_scf_results(FSC_SVM_map_path, shapefile_path, curr_aux_folder, curr_acquisition, k=5, n_closest=5)
+            
+            # Load SCF and NDSI data to check the condition
+            with rasterio.open(FSC_SVM_map_path) as scf_src:
+                scf_data = scf_src.read(1)  # Reading first band
+            
+            NDSI_path = glob.glob(os.path.join(curr_aux_folder, '*NDSI.tif'))[0]
+            with rasterio.open(NDSI_path) as ndsi_src:
+                ndsi_data = ndsi_src.read(1)  # Reading first band
+         
+            # Check condition
+            if np.sum((scf_data > 0) & (scf_data <= 100) & (ndsi_data < 0)) == 0:
+                break  # Exit the loop if no points meet the condition
+
+        print("Process completed. Condition met, and no points found where SCF > 0 and NDSI < 0.")
             
             
 

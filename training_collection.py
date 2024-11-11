@@ -18,6 +18,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import geopandas as gpd
 from shapely.geometry import Point
+from scipy.spatial.distance import cdist
 
 def read_masked_values(geotiff_path, mask, bands=None):
     """
@@ -89,6 +90,7 @@ def get_representative_pixels(bands_data, valid_mask, k=5, n_closest=5):
     kmeans.fit(no_snow_pixels)
     
     # Get cluster centroids and labels
+    #labels, centroids = kernel_kmeans(no_snow_pixels, k, gamma)
     labels = kmeans.labels_
     centroids = kmeans.cluster_centers_
 
@@ -115,8 +117,6 @@ def get_representative_pixels(bands_data, valid_mask, k=5, n_closest=5):
         representative_pixels_mask[selected_pixels] = 1
 
     return representative_pixels_mask;
-
-   
  
 def collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, SVM_folder_name, no_data_mask, bands):
     
@@ -133,7 +133,13 @@ def collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, 
     NDVI_path = glob.glob(os.path.join(curr_aux_folder, '*NDVI.tif'))[0]
     diff_B_NIR_path = glob.glob(os.path.join(curr_aux_folder, '*diffBNIR.tif'))[0]
     shad_idx_path = glob.glob(os.path.join(curr_aux_folder, '*shad_idx.tif'))[0]
-    bands_path = glob.glob(os.path.join(curr_acquisition, '*scf.vrt'))[0]
+    
+    bands_path = glob.glob(os.path.join(curr_acquisition, '*scf.vrt'))
+    
+    if bands_path == []:
+        bands_path = glob.glob(os.path.join(curr_acquisition, 'PRS*.tif'))[0]
+    else:
+        ref_img_path = ref_img_path[0]
     
     valid_mask = np.logical_not(no_data_mask)
     
@@ -143,7 +149,9 @@ def collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, 
     solar_incidence_angle = open_image(solar_incidence_angle_path)[0]
     curr_scene_valid = np.logical_not(np.logical_or.reduce((cloud_mask == 2, water_mask == 1, no_data_mask)))
     
-    ranges = ((0,20), (20, 45), (45, 70), (70, 80), (90, 180))
+    ranges = ((0,20), (20, 45), (45, 70), (70, 90), (90, 180))
+    
+    #ranges = ((70, 90))
     
     #ranges = ((0,20), (20, 30), (30, 40), (40, 50), (50, 60), (60, 70), (70, 80), (80, 90), (90, 180))
     empty = np.zeros(curr_scene_valid.shape, dtype='uint8')
@@ -199,10 +207,10 @@ def collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, 
             if np.sum(curr_valid_no_snow_mask_shadow) > 10:
                 representative_pixels_mask_noSnow = get_representative_pixels(curr_bands, curr_valid_no_snow_mask_shadow, k=3, n_closest=10) * 2
         else:
-            curr_valid_no_snow_mask = (curr_NDSI < 0.1).flatten()
+            curr_valid_no_snow_mask = (curr_NDSI < 0).flatten()
             
             if np.sum(curr_valid_no_snow_mask) > 10:
-                representative_pixels_mask_noSnow = get_representative_pixels(curr_bands, curr_valid_no_snow_mask, k=10, n_closest=10) * 2
+                representative_pixels_mask_noSnow = get_representative_pixels(curr_bands, curr_valid_no_snow_mask, k=10, n_closest=5) * 2
     
         # Check if masks have been assigned; if not, set as zeros
         if representative_pixels_mask_snow.size == 0:
@@ -212,6 +220,9 @@ def collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, 
             
         representative_pixels_mask = representative_pixels_mask_noSnow + representative_pixels_mask_snow
         empty[curr_angle_valid] = representative_pixels_mask
+        
+        print(str(np.sum(representative_pixels_mask_snow.flatten())) + ' SNOW PIXELS')
+        print(str(np.sum(representative_pixels_mask_noSnow.flatten() / 2)) + ' NO SNOW PIXELS')
 
 
     # Convert points where result == 1 or 2 to a shapefile
@@ -239,13 +250,76 @@ def collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, 
         dst.write(empty, 1)
 
     return shapefile_path , training_mask_path   
- 
+  
+def rbf_kernel(X, gamma):
+    """
+    Computes the RBF (Gaussian) kernel matrix for the dataset X.
     
- 
+    Parameters:
+    - X: np.ndarray, shape (n_samples, n_features)
+        The input data.
+    - gamma: float
+        The parameter for the RBF kernel, defined as 1 / (2 * sigma^2).
+        
+    Returns:
+    - K: np.ndarray, shape (n_samples, n_samples)
+        The RBF kernel matrix.
+    """
+    pairwise_sq_dists = cdist(X, X, 'sqeuclidean')
+    K = np.exp(-gamma * pairwise_sq_dists)
+    return K
+
+def kernel_kmeans(X, n_clusters, gamma, max_iter=100):
+    """
+    Performs k-means clustering using an RBF kernel instead of Euclidean distance.
     
- 
+    Parameters:
+    - X: np.ndarray, shape (n_samples, n_features)
+        The input data.
+    - n_clusters: int
+        Number of clusters.
+    - gamma: float
+        Parameter for the RBF kernel, defined as 1 / (2 * sigma^2).
+    - max_iter: int, optional, default=100
+        Maximum number of iterations for the algorithm.
+        
+    Returns:
+    - labels: np.ndarray, shape (n_samples,)
+        The cluster labels for each sample.
+    - centroids: np.ndarray, shape (n_clusters, n_features)
+        The approximated centroids in the original feature space.
+    """
+    # Step 1: Compute the kernel matrix
+    K = rbf_kernel(X, gamma)
     
- 
+    # Step 2: Initialize cluster assignments randomly
+    n_samples = X.shape[0]
+    labels = np.random.randint(0, n_clusters, n_samples)
     
+    # Step 3: Kernel k-means iteration
+    for _ in range(max_iter):
+        # Compute distances to centroids in the transformed space
+        distances = np.zeros((n_samples, n_clusters))
+        for k in range(n_clusters):
+            cluster_k = K[:, labels == k]
+            N_k = np.sum(labels == k)
+            if N_k > 0:
+                # Compute the distance to the "centroid" in the kernel space
+                distances[:, k] = np.diag(K) - 2 * np.sum(cluster_k, axis=1) / N_k + \
+                                  np.sum(K[labels == k][:, labels == k]) / (N_k ** 2)
+        
+        # Update labels based on minimal distance
+        new_labels = np.argmin(distances, axis=1)
+        
+        # Check for convergence
+        if np.all(labels == new_labels):
+            break
+        
+        labels = new_labels
+
+    # Step 4: Compute approximate centroids in the original space
+    centroids = np.array([X[labels == k].mean(axis=0) for k in range(n_clusters)])
+    
+    return labels, centroids
 
 

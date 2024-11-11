@@ -24,6 +24,7 @@ from datetime import timezone
 from pysolar.solar import *
 from rasterio.crs import CRS
 from pyproj import Transformer
+from pathlib import Path
 
 def create_auxiliary_folder(working_folder, folder_name = '01_TEST_auxiliary_folder'):
     """
@@ -662,9 +663,20 @@ def S2_clouds_classifier(stack_clouds_path, path_cloud_mask, ref_img_path, cloud
     
     return path_cloud_mask, cloud_cover_percentage;
     
-def create_default_cloud_mask(shape, path):
+def create_default_cloud_mask(shape, path_cloud_mask):
+    
+    path_cloud_mask = Path(path_cloud_mask)
+    parent_one_levels_up = path_cloud_mask.parents[1]
+    ref_img_path = glob.glob(os.path.join(parent_one_levels_up, '*scf.vrt'))
+    
+    if ref_img_path == []:
+        ref_img_path = glob.glob(os.path.join(parent_one_levels_up, 'PRS*.tif'))[0]
+    else:
+        ref_img_path = ref_img_path[0]
+        
+    img_info = open_image(ref_img_path)[1]
     cloud_mask = np.zeros_like(shape) + 1
-    save_image(cloud_mask, path, 'GTiff', 1, img_info['geotransform'], img_info['projection'])
+    save_image(cloud_mask, path_cloud_mask, 'GTiff', 1, img_info['geotransform'], img_info['projection'])
     del cloud_mask   
       
 def generate_no_data_mask(L_image, sensor, no_data_value=np.nan):
@@ -686,7 +698,8 @@ def generate_no_data_mask(L_image, sensor, no_data_value=np.nan):
         elif sensor == "L7":
             no_data_mask = (np.isnan(L_image[0, :, :]) | np.isnan(L_image[np.max(np.shape(L_image)[0] - 1), :, :]) | np.isnan(L_image[6, :, :])).astype(bool)
         else:
-            no_data_mask = (np.isnan(L_image[0, :, :]) | np.isnan(L_image[np.max(np.shape(L_image)[0] - 1), :, :])).astype(bool)
+            #no_data_mask = (np.isnan(L_image[0, :, :]) | np.isnan(L_image[np.max(np.shape(L_image)[0] - 1), :, :])).astype(bool)
+            no_data_mask = np.any(np.isnan(L_image), axis=0)
     else:
         # Handle other no-data values if needed
         raise NotImplementedError("Handling of non-NaN no-data values is not implemented yet.")
