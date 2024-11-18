@@ -68,8 +68,18 @@ def main():
         print("VRT creation process completed.")
     if sensor == 'PRISMA':
         
-        ref_img_path = glob.glob(acquisitions_filtered[0] + os.sep + "PRS*.tif")[0]
+        ref_img_path = [f for f in glob.glob(acquisitions_filtered[0] + os.sep + "PRS*.tif") if 'PCA' not in f][0]
         
+    # PCA
+    
+    if get_input_param(input_data, 'PCA') == 'yes':
+        
+        perform_pca = True
+        
+    else:
+        perform_pca = False
+            
+    
     
     # Step 7: Generate water mask
     print("Generating water mask...")
@@ -159,13 +169,27 @@ def main():
                 del cloud_mask
             
         # Handle no-data mask
-        curr_band_stack_path = ref_img_path
+        
+        curr_band_stack_path = glob.glob(os.path.join(curr_acquisition, '*scf.vrt'))
+        
+        if curr_band_stack_path == []:
+            curr_band_stack_path = [f for f in glob.glob(curr_acquisition + os.sep + "PRS*.tif") if 'PCA' not in f][0]
+        else:
+            curr_band_stack_path = curr_band_stack_path[0]
+            
+        
         curr_image, curr_image_info = open_image(curr_band_stack_path)
         curr_image[curr_image == no_data_value] = np.nan
         no_data_mask, valid_mask = generate_no_data_mask(curr_image, sensor, no_data_value=np.nan)
         no_data_percentage = np.sum(no_data_mask) / (curr_image_info['X_Y_raster_size'][0] * curr_image_info['X_Y_raster_size'][1])
         cloud_perc_corr = cloud_cover_percentage / (1 - no_data_percentage)
         
+        
+        if perform_pca:
+            
+            perform_pca_on_geotiff(curr_band_stack_path, valid_mask)
+            
+            
         # Compute spectral indices: NDVI, NDSI, band difference, and shadow index
         valid_mask = np.logical_not(no_data_mask)
         bands = define_bands(curr_image, valid_mask, sensor)
@@ -184,13 +208,13 @@ def main():
         while True:
             
             print('TRAINING')
-            svm_model_filename = model_training(curr_acquisition, shapefile_path, SVM_folder_name, gamma = None)
+            svm_model_filename = model_training(curr_acquisition, shapefile_path, SVM_folder_name, gamma = None, perform_pca = perform_pca)
             
             # Step 11: Run SCF prediction
-            FSC_SVM_map_path = SCF_dist_SV(curr_acquisition, curr_aux_folder, auxiliary_folder_path, no_data_mask, svm_model_filename, Nprocesses=8, overwrite=True)
+            FSC_SVM_map_path = SCF_dist_SV(curr_acquisition, curr_aux_folder, auxiliary_folder_path, no_data_mask, svm_model_filename, Nprocesses=8, overwrite=True, perform_pca = perform_pca)
             
             # Step 12: Result check
-            shapefile_path = check_scf_results(FSC_SVM_map_path, shapefile_path, curr_aux_folder, curr_acquisition, k=5, n_closest=5)
+            shapefile_path = check_scf_results(FSC_SVM_map_path, shapefile_path, curr_aux_folder, curr_acquisition, k=5, n_closest=5, perform_pca= perform_pca)
             
             # Load SCF and NDSI data to check the condition
             with rasterio.open(FSC_SVM_map_path) as scf_src:

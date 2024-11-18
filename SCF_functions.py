@@ -11,22 +11,30 @@ from training_collection import *
 from sklearn import preprocessing
 from sklearn.svm import SVC, LinearSVC
 from sklearn.metrics.pairwise import rbf_kernel, pairwise_kernels, linear_kernel, cosine_similarity
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
 import pickle
 from joblib import Parallel, delayed
 from rasterio.features import geometry_mask
 from scipy.spatial import distance
 
 
-def model_training(curr_acquisition, shapefile_path, SVM_folder_name, gamma=None):
+def model_training(curr_acquisition, shapefile_path, SVM_folder_name, gamma=None, perform_pca = False):
     
     gamma_range = np.logspace(-2, 2, 100)
     
-    bands_path = glob.glob(os.path.join(curr_acquisition, '*scf.vrt'))
+   
     
-    if bands_path == []:
-        bands_path = glob.glob(os.path.join(curr_acquisition, 'PRS*.tif'))[0]
+    if perform_pca:
+        bands_path = glob.glob(os.path.join(curr_acquisition, '*PCA.tif'))[0]
+        
     else:
-        bands_path = bands_path[0]
+         
+        bands_path = glob.glob(os.path.join(curr_acquisition, '*scf.vrt'))
+        if bands_path == []:
+            bands_path = [f for f in glob.glob(curr_acquisition + os.sep + "PRS*.tif") if 'PCA' not in f][0]
+        else:
+            bands_path = bands_path[0]
     
     
     # Load the shapefile
@@ -95,16 +103,23 @@ def hyp_disatance(svmModel, svmMatrix):
     return svmModel.decision_function(svmMatrix)
 
 
-def SCF_dist_SV(curr_acquisition, curr_aux_folder, auxiliary_folder_path, no_data_mask, svm_model_filename, Nprocesses=8, overwrite=False):
+def SCF_dist_SV(curr_acquisition, curr_aux_folder, auxiliary_folder_path, no_data_mask, svm_model_filename, Nprocesses=8, overwrite=False, perform_pca = False):
     
     path_cloud_mask = glob.glob(os.path.join(curr_aux_folder, '*cloud_Mask.tif'))[0]
     path_water_mask = glob.glob(os.path.join(auxiliary_folder_path, '*Water_Mask.tif'))[0] 
-    bands_path = glob.glob(os.path.join(curr_acquisition, '*scf.vrt'))
     
-    if bands_path == []:
-        bands_path = glob.glob(os.path.join(curr_acquisition, 'PRS*.tif'))[0]
+    
+    if perform_pca:
+        bands_path = glob.glob(os.path.join(curr_acquisition, '*PCA.tif'))[0]
+        
     else:
-        bands_path = bands_path[0]
+           
+        bands_path = glob.glob(os.path.join(curr_acquisition, '*scf.vrt'))
+        if bands_path == []:
+            bands_path = [f for f in glob.glob(curr_acquisition + os.sep + "PRS*.tif") if 'PCA' not in f][0]
+        else:
+            bands_path = bands_path[0]
+    
     scf_folder = os.path.dirname(svm_model_filename)
     
     # Load the SVM model
@@ -178,16 +193,20 @@ def SCF_dist_SV(curr_acquisition, curr_aux_folder, auxiliary_folder_path, no_dat
 
 
     
-def check_scf_results(FSC_SVM_map_path, shapefile_path, curr_aux_folder, curr_acquisition, k=5, n_closest=5):
+def check_scf_results(FSC_SVM_map_path, shapefile_path, curr_aux_folder, curr_acquisition, k=5, n_closest=5, perform_pca = False):
     # Define paths for NDSI and bands data
     NDSI_path = glob.glob(os.path.join(curr_aux_folder, '*NDSI.tif'))[0]
     
-    bands_path = glob.glob(os.path.join(curr_acquisition, '*scf.vrt'))
-    
-    if bands_path == []:
-        bands_path = glob.glob(os.path.join(curr_acquisition, 'PRS*.tif'))[0]
+    if perform_pca:
+        bands_path = glob.glob(os.path.join(curr_acquisition, '*PCA.tif'))[0]
+        
     else:
-        bands_path = bands_path[0]
+           
+        bands_path = glob.glob(os.path.join(curr_acquisition, '*scf.vrt'))
+        if bands_path == []:
+            bands_path = [f for f in glob.glob(curr_acquisition + os.sep + "PRS*.tif") if 'PCA' not in f][0]
+        else:
+            bands_path = bands_path[0]
     
     # Load the SCF map and NDSI map
     with rasterio.open(FSC_SVM_map_path) as scf_src:
@@ -233,7 +252,6 @@ def check_scf_results(FSC_SVM_map_path, shapefile_path, curr_aux_folder, curr_ac
     updated_shapefile.to_file(shapefile_path)
 
     return shapefile_path  
-
 
 
 

@@ -11,6 +11,9 @@ import netCDF4
 import numpy as np
 import glob
 import rasterio
+from sklearn.metrics.pairwise import rbf_kernel, pairwise_kernels, linear_kernel, cosine_similarity
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
 
 
 def data_filter(start_date, end_date, working_folder, sensor):
@@ -604,5 +607,73 @@ def define_datetime(sensor,acquisition_name):
                    
     return date_time,date
 
+
+def perform_pca_on_geotiff(input_tiff, valid_mask, variance_threshold=0.95, no_data_value=-999):
+    """
+    Reads a hyperspectral image, performs PCA to reduce dimensionality to the optimal number of components, 
+    and saves the resulting PCA bands in a new GeoTIFF. PCA is applied only to valid areas defined by `valid_mask`.
+
+    Parameters:
+    - input_tiff: str, path to the input GeoTIFF file.
+    - valid_mask: numpy array, boolean mask where True indicates valid data.
+    - variance_threshold: float, the cumulative variance ratio to retain (default is 0.95).
+    - no_data_value: float, the value to assign for invalid pixels in the output image (default is -9999).
+    """
+    import os
+    import numpy as np
+    import rasterio
+    from sklearn.decomposition import PCA
+    from sklearn.preprocessing import StandardScaler
+
+    output_tiff = input_tiff[:-4] + '_PCA.tif'
+    
+    if not os.path.exists(output_tiff):
+        # Load hyperspectral image
+        with rasterio.open(input_tiff) as src:
+            img_data = src.read().astype(np.float32)
+            n_bands, height, width = img_data.shape
+            
+            # Check valid_mask dimensions
+            if valid_mask.shape != (height, width):
+                raise ValueError("valid_mask dimensions do not match the image dimensions.")
+            
+            # Flatten the spatial dimensions
+            img_data_reshaped = img_data.reshape(n_bands, -1).T
+            valid_mask_flat = valid_mask.flatten()
+            
+            # Filter data based on valid_mask
+            valid_data = img_data_reshaped[valid_mask_flat]
+            
+            # Standardize valid data
+            scaler = StandardScaler()
+            valid_data_scaled = scaler.fit_transform(valid_data)
+            
+            # Determine optimal number of components
+            pca = PCA()
+            pca.fit(valid_data_scaled)
+            cumulative_variance = np.cumsum(pca.explained_variance_ratio_)
+            optimal_components = np.argmax(cumulative_variance >= variance_threshold) + 1
+            
+            print(f"Optimal number of components: {optimal_components}")
+            
+            # Perform PCA with the optimal number of components
+            pca = PCA(n_components=optimal_components)
+            pca_data = pca.fit_transform(valid_data_scaled)
+            
+            # Prepare the output array with no_data values
+            pca_data_full = np.full((optimal_components, height * width), no_data_value, dtype=np.float32)
+            pca_data_full[:, valid_mask_flat] = pca_data.T
+            
+            # Reshape to (optimal_components, height, width)
+            pca_data_reshaped = pca_data_full.reshape(optimal_components, height, width)
+            
+            # Write PCA bands to a new GeoTIFF file
+            profile = src.profile
+            profile.update(count=optimal_components, dtype=rasterio.float32, nodata=no_data_value)
+            
+            with rasterio.open(output_tiff, 'w', **profile) as dst:
+                dst.write(pca_data_reshaped)
+        
+        print("PCA transformation complete. Output saved as:", output_tiff)
 
 

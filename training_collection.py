@@ -118,7 +118,7 @@ def get_representative_pixels(bands_data, valid_mask, k=5, n_closest=5):
 
     return representative_pixels_mask;
  
-def collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, SVM_folder_name, no_data_mask, bands):
+def collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, SVM_folder_name, no_data_mask, bands, PCA=False):
     
     scf_folder = os.path.join(curr_acquisition, SVM_folder_name)
     if not os.path.exists(scf_folder):
@@ -133,14 +133,15 @@ def collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, 
     NDVI_path = glob.glob(os.path.join(curr_aux_folder, '*NDVI.tif'))[0]
     diff_B_NIR_path = glob.glob(os.path.join(curr_aux_folder, '*diffBNIR.tif'))[0]
     shad_idx_path = glob.glob(os.path.join(curr_aux_folder, '*shad_idx.tif'))[0]
+        
     
     bands_path = glob.glob(os.path.join(curr_acquisition, '*scf.vrt'))
     
     if bands_path == []:
-        bands_path = glob.glob(os.path.join(curr_acquisition, 'PRS*.tif'))[0]
+        bands_path = [f for f in glob.glob(curr_acquisition + os.sep + "PRS*.tif") if 'PCA' not in f][0]
     else:
-        ref_img_path = ref_img_path[0]
-    
+        bands_path = bands_path[0]
+        
     valid_mask = np.logical_not(no_data_mask)
     
     # Load masks and other necessary data
