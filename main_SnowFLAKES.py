@@ -21,9 +21,9 @@ def main():
     # Step 1: Load input data
     # Define the path to the CSV file containing input parameters
     #csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/Azufre.csv')
-    #csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/Generic_area.csv')
+    csv_path = os.path.join('/mnt/CEPH_PROJECTS/PROSNOW/Cristian_Phd/SnowFLAKES/input_csv/Generic_area.csv')
     #csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/sierra_nevada.csv')
-    csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/prisma_test.csv')
+    #csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/prisma_test.csv')
     
     input_data = pd.read_csv(csv_path)
 
@@ -35,7 +35,7 @@ def main():
     acquisitions = sorted(os.listdir(working_folder))
     if not acquisitions:
         raise ValueError("No acquisitions found in the working folder.")
-    acquisition_name = acquisitions[-1]  # Use the first acquisition as a representative sample
+    acquisition_name = acquisitions[-2]  # Use the first acquisition as a representative sample
     sensor = get_sensor(acquisition_name)
     
     # Step 3: Create auxiliary folder for storing permanent layers
@@ -56,7 +56,14 @@ def main():
     print(f"Using resolution: {resolution}.")
     
     # Step 5: Retrieve no data value
-    no_data_value = float(get_input_param(input_data, 'no_data_value'))
+    no_data_value = get_input_param(input_data, 'no_data_value')
+    
+    if no_data_value == None:
+        no_data_value = np.nan
+        
+    else:
+        no_data_value = float(no_data_value)
+        
     print(f"no data value: {no_data_value}.")
 
     # Step 6: Generate VRT (Virtual Raster Table) files with stacked bands for selected acquisitions
@@ -192,6 +199,13 @@ def main():
             
         # Compute spectral indices: NDVI, NDSI, band difference, and shadow index
         valid_mask = np.logical_not(no_data_mask)
+        
+        if np.sum(no_data_mask) /len(valid_mask.flatten()) > 0.5 or cloud_perc_corr > 0.5:
+            
+            print('TOO MANY INVALID PIXELS...')
+            
+            continue
+            
         bands = define_bands(curr_image, valid_mask, sensor)
         
         spectral_idx_computer(bands['NIR'], bands['RED'], 'NDVI', curr_image, no_data_mask, curr_aux_folder, sensor, f"{sensor}_{date}_NDVI.tif", curr_band_stack_path)

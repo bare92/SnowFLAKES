@@ -1,9 +1,9 @@
 Name,Value,,
-working_folder,/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/HYPERSPECTRAL/PRISMA_20240129,,
-Start Date,20240129,,20220113
-End Date,20240129,,
+working_folder,/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/HYPERSPECTRAL/PRISMA_20240316,,
+Start Date,20240316,,20220113
+End Date,20240316,,
 resolution,30,,
-no_data_value,0,,
+no_data_value,-999,,
 PCA,yes,,
 External_water_mask,,,
 External_Dem_path,,,
