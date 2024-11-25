@@ -711,7 +711,7 @@ def generate_no_data_mask(L_image, sensor, no_data_value=np.nan):
 
 
     
-def spectral_idx_computer(B1, B2, idx_name, curr_image, no_data_mask, curr_aux_folder, sensor, output_filename, ref_img_path):
+def spectral_idx_computer(B1, B2, idx_name, curr_image, no_data_mask, curr_aux_folder, sensor, output_filename, ref_img_path, B3=None, B4=None):
     """
     Computes a spectral index and saves the result in the specified folder.
     
@@ -749,18 +749,23 @@ def spectral_idx_computer(B1, B2, idx_name, curr_image, no_data_mask, curr_aux_f
     
     # Define the calculations for each index
     calculations = {
-        'NDSI': lambda B1, B2: (B1 - B2) / (B1 + B2),
-        'NDVI': lambda B1, B2: (B1 - B2) / (B1 + B2),
-        'shad_idx': lambda B1, B2:  (B1 - B2) / (B1 + B2) / B1,
-        'band_diff': lambda B1, B2: B1-B2
+        'normDiff': lambda B1, B2, B3, B4: (B1 - B2) / (B1 + B2),
+        'shad_idx': lambda B1, B2, B3, B4:  (B1 - B2) / (B1 + B2) / B1,
+        'band_diff': lambda B1, B2, B3, B4: B1-B2,
+        'EVI': lambda B1, B2, B3, B4: 2.5*(B1-B2) / (B1+2.4*B2+1),
+        'NDSIplus': lambda B1, B2, B3, B4: 2*(B1+B2-B3-B4) / (B1+B2+B3+B4),
+        'idx6': lambda B1, B2, B3, B4: 2*(2*B1-B2-B3) / (2*B1+B2+B3)
+        
+        
     }
     
     # Check if the index name is in the dictionary
     if idx_name not in calculations:
         raise ValueError(f"Index '{idx_name}' is not supported.")
     
+    
     # Perform the calculation
-    idx_out = calculations[idx_name](B1, B2)
+    idx_out = calculations[idx_name](B1, B2, B3, B4)
     
     # Set the pixels corresponding to no_data_mask to invalid (e.g., np.nan)
     idx_out[no_data_mask] = np.nan
@@ -864,8 +869,85 @@ def solar_incidence_angle_calculator(curr_image_info, date_time, slopePath, aspe
     print(f"Solar incidence angle saved at {output_path}")
     return solar_incidence_angle      
     
+def generate_shadow_mask(curr_aux_folder, auxiliary_folder_path, no_data_mask, NIR):
+    """
+    Generate a shadow mask dynamically without setting thresholds and save as GeoTIFF.
+
+    Parameters:
+    - curr_aux_folder: Path to the auxiliary folder containing GeoTIFF files for indices.
+    """
+    # Find the paths to the necessary GeoTIFF files
+    ndvi_path = glob.glob(os.path.join(curr_aux_folder, '*NDVI.tif'))[0]
+    idx6_path = glob.glob(os.path.join(curr_aux_folder, '*idx6.tif'))[0]
+    evi_path = glob.glob(os.path.join(curr_aux_folder, '*EVI.tif'))[0]
+    shad_idx_path = glob.glob(os.path.join(curr_aux_folder, '*shad_idx.tif'))[0]
+    
+    path_cloud_mask = glob.glob(os.path.join(curr_aux_folder, '*cloud_Mask.tif'))[0]
+    path_water_mask = glob.glob(os.path.join(auxiliary_folder_path, '*Water_Mask.tif'))[0]
+    
+    solar_incidence_angle_path = glob.glob(os.path.join(curr_aux_folder, '*solar_incidence_angle.tif'))[0]
     
     
+    # Read input GeoTIFFs
+    with rasterio.open(idx6_path) as src1, \
+         rasterio.open(shad_idx_path) as src2, \
+         rasterio.open(ndvi_path) as src_ndvi, \
+         rasterio.open(evi_path) as src_evi, \
+         rasterio.open(path_cloud_mask) as src_clouds, \
+         rasterio.open(path_water_mask) as src_water, \
+         rasterio.open(solar_incidence_angle_path) as src_angle:
+        
+        # Read data arrays
+        index1 = src1.read(1).astype(float)
+        index2 = src2.read(1).astype(float)
+        ndvi = src_ndvi.read(1).astype(float)
+        evi = src_evi.read(1).astype(float)
+        cloud_mask = src_clouds.read(1).astype(int)
+        water_mask = src_water.read(1).astype(int)
+        solar_incidence_angle = src_angle.read(1).astype(float)
+        
+        # Read metadata for output
+        meta = src1.meta.copy()
+        
+    # Normalize indices to range [0, 1]
+    def normalize(arr):
+        arr_min, arr_max = np.nanmin(arr), np.nanmax(arr)
+        return (arr - arr_min) / (arr_max - arr_min) if arr_max > arr_min else np.zeros_like(arr)
+    
+    curr_range = (90, 180)   
+    curr_scene_valid = np.logical_not(np.logical_or.reduce((cloud_mask == 2, water_mask == 1, no_data_mask)))
+    curr_angle_valid = np.logical_and(curr_scene_valid, np.logical_and(solar_incidence_angle >= curr_range[0], solar_incidence_angle < curr_range[1]))
+    
+    
+    index1_norm = normalize(index1)
+    index2_norm = normalize(index2)
+    ndvi_norm = normalize(ndvi)
+    evi_norm = normalize(evi)
+    
+    
+    # Combine indices to create a composite shadow score
+    # Shadow pixels maximize index1 and index2, minimize ndvi and evi
+    shadow_score = (index1_norm + index2_norm) - (ndvi_norm + evi_norm + NIR)
+    
+    threshold = np.percentile(shadow_score[curr_angle_valid], [5, 95])[0]
+    #plt.hist(shadow_score.flatten(), bins=50)
+    # Create shadow mask: positive values indicate shadow
+    shadow_mask = (shadow_score > threshold).astype(np.uint8)
+    
+    # Update metadata for output
+    meta.update({
+        "dtype": "uint8",
+        "count": 1,
+        "nodata": 255,  # Use 255 as the nodata value for uint8
+        "compress": "lzw"  # Compression to reduce file size
+    })
+    
+    # Save shadow mask to GeoTIFF
+    output_path = os.path.join(curr_aux_folder, 'shadow_mask.tif')
+    with rasterio.open(output_path, "w", **meta) as dst:
+        dst.write(shadow_mask, 1)
+    
+    print(f"Shadow mask saved to {output_path}")
     
     
     

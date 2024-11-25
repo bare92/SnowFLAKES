@@ -21,8 +21,8 @@ def main():
     # Step 1: Load input data
     # Define the path to the CSV file containing input parameters
     #csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/Azufre.csv')
-    csv_path = os.path.join('/mnt/CEPH_PROJECTS/PROSNOW/Cristian_Phd/SnowFLAKES/input_csv/Generic_area.csv')
-    #csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/sierra_nevada.csv')
+    #csv_path = os.path.join('/mnt/CEPH_PROJECTS/PROSNOW/Cristian_Phd/SnowFLAKES/input_csv/Generic_area.csv')
+    csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/sierra_nevada.csv')
     #csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/prisma_test.csv')
     
     input_data = pd.read_csv(csv_path)
@@ -208,13 +208,25 @@ def main():
             
         bands = define_bands(curr_image, valid_mask, sensor)
         
-        spectral_idx_computer(bands['NIR'], bands['RED'], 'NDVI', curr_image, no_data_mask, curr_aux_folder, sensor, f"{sensor}_{date}_NDVI.tif", curr_band_stack_path)
-        spectral_idx_computer(bands['GREEN'], bands['SWIR'], 'NDSI', curr_image, no_data_mask, curr_aux_folder, sensor, f"{sensor}_{date}_NDSI.tif", curr_band_stack_path)
+        spectral_idx_computer(bands['NIR'], bands['RED'], 'normDiff', curr_image, no_data_mask, curr_aux_folder, sensor, f"{sensor}_{date}_NDVI.tif", curr_band_stack_path)
+        spectral_idx_computer(bands['GREEN'], bands['SWIR'], 'normDiff', curr_image, no_data_mask, curr_aux_folder, sensor, f"{sensor}_{date}_NDSI.tif", curr_band_stack_path)
         spectral_idx_computer(bands['BLUE'], bands['NIR'], 'band_diff', curr_image, no_data_mask, curr_aux_folder, sensor, f"{sensor}_{date}_diffBNIR.tif", curr_band_stack_path)
         spectral_idx_computer(bands['GREEN'], bands['SWIR'], 'shad_idx', curr_image, no_data_mask, curr_aux_folder, sensor, f"{sensor}_{date}_shad_idx.tif", curr_band_stack_path)
         
+        spectral_idx_computer(bands['BLUE'], bands['NIR'], 'normDiff', curr_image, no_data_mask, curr_aux_folder, sensor, f"{sensor}_{date}_NormDiffBNIR.tif", curr_band_stack_path)
+        spectral_idx_computer(bands['GREEN'], bands['RED'], 'normDiff', curr_image, no_data_mask, curr_aux_folder, sensor, f"{sensor}_{date}_NormDiffGreenRed.tif", curr_band_stack_path)
+        
+        spectral_idx_computer(bands['NIR'], bands['RED'], 'EVI', curr_image, no_data_mask, curr_aux_folder, sensor, f"{sensor}_{date}_EVI.tif", curr_band_stack_path)
+        spectral_idx_computer(bands['GREEN'], bands['RED'], 'NDSIplus', curr_image, no_data_mask, curr_aux_folder, sensor, f"{sensor}_{date}_NDSIplus.tif", curr_band_stack_path, B3=bands['NIR'], B4=bands['SWIR'])
+        spectral_idx_computer(bands['GREEN'], bands['RED'], 'idx6', curr_image, no_data_mask, curr_aux_folder, sensor, f"{sensor}_{date}_idx6.tif", curr_band_stack_path, B3=bands['NIR'])
+        
         # Calculate solar incidence angle
         solar_incidence_angle = solar_incidence_angle_calculator(curr_image_info, date_time, slopePath, aspectPath, curr_aux_folder, date)
+        
+        # shadow mask
+        
+        generate_shadow_mask(curr_aux_folder, auxiliary_folder_path, no_data_mask, bands['NIR'])
+        
         
         # Step 10: Collect training data and train the SVM model
         shapefile_path, training_mask_path = collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, SVM_folder_name, no_data_mask, bands)

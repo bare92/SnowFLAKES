@@ -19,6 +19,7 @@ import matplotlib.pyplot as plt
 import geopandas as gpd
 from shapely.geometry import Point
 from scipy.spatial.distance import cdist
+from sklearn.metrics import silhouette_score
 
 def read_masked_values(geotiff_path, mask, bands=None):
     """
@@ -57,7 +58,7 @@ def read_masked_values(geotiff_path, mask, bands=None):
     return masked_values
 
 
-def get_representative_pixels(bands_data, valid_mask, k=5, n_closest=5):
+def get_representative_pixels(bands_data, valid_mask, k='auto', n_closest='auto'):
     """
     Selects representative "no snow" pixels by clustering and distance to cluster centroids.
     Saves the output as a raster.
@@ -68,56 +69,130 @@ def get_representative_pixels(bands_data, valid_mask, k=5, n_closest=5):
         3D array (bands, height, width) containing spectral data for each band.
     valid_mask : numpy.ndarray
         2D mask of valid pixels for selection.
-    NDSI_path : str
-        Path to the NDSI file for extracting the profile.
-    output_path : str
-        Path to save the representative pixels mask as a GeoTIFF.
     k : int, optional
         Number of clusters for K-means, by default 5.
     n_closest : int, optional
-        Number of closest pixels to each centroid to select, by default 10.
+        Number of closest pixels to each centroid to select, by default 5.
 
     Returns
     -------
-    None
+    representative_pixels_mask : numpy.ndarray
+        2D mask with representative pixels marked as 1.
     """
+    # Extract "valid" pixels for clustering
+    valid_pixels = bands_data[valid_mask, :]  # Shape (pixels, bands)
 
-    # Extract "no snow" pixels for clustering
-    no_snow_pixels = bands_data[valid_mask, :]  # Shape (pixels, bands)
+    # Normalize the valid pixels
+    scaler = StandardScaler()
+    normalized_pixels = scaler.fit_transform(valid_pixels)
     
+    # find optimal K
+    if k == 'auto':
+        k = find_optimal_k(normalized_pixels, max_k=10, method="elbow")
+    if n_closest == 'auto':
+        n_closest = int(50 / k)
+
     # Perform K-means clustering on "no snow" pixels
     kmeans = KMeans(n_clusters=k, random_state=0)
-    kmeans.fit(no_snow_pixels)
-    
+    kmeans.fit(normalized_pixels)
+
     # Get cluster centroids and labels
-    #labels, centroids = kernel_kmeans(no_snow_pixels, k, gamma)
     labels = kmeans.labels_
     centroids = kmeans.cluster_centers_
 
-   
+    # Initialize an empty mask for representative pixels
     representative_pixels_mask = np.zeros(valid_mask.shape, dtype='uint8')
-    
+
     # Find the n_closest pixels to each centroid
     for cluster_idx in range(k):
         # Select pixels in the current cluster
-        cluster_pixels = no_snow_pixels[labels == cluster_idx]
-        
+        cluster_indices = np.where(labels == cluster_idx)[0]
+        cluster_pixels = normalized_pixels[cluster_indices]
+
         # Compute distances to the centroid for these pixels
         distances = distance.cdist(cluster_pixels, [centroids[cluster_idx]], 'euclidean').flatten()
-        
+
         # Get the indices of the n_closest pixels in the cluster
         closest_indices = np.argsort(distances)[:n_closest]
-        
+
         # Map the closest indices back to the original image coordinates
-        original_indices = np.argwhere(valid_mask)[labels == cluster_idx]
+        original_indices = np.argwhere(valid_mask)[cluster_indices]
         selected_pixels = original_indices[closest_indices]
-        
+
         # Set these pixels in the representative mask
-       
         representative_pixels_mask[selected_pixels] = 1
 
-    return representative_pixels_mask;
- 
+    return representative_pixels_mask
+
+def find_optimal_k(data, max_k=10, method="elbow", random_state=42):
+    """
+    Find the optimal number of clusters using the Elbow or Silhouette method.
+
+    Parameters:
+    - data (array-like): The dataset to cluster.
+    - max_k (int): The maximum number of clusters to evaluate.
+    - method (str): "elbow" for WCSS-based elbow method or "silhouette" for silhouette score.
+    - random_state (int): Random seed for reproducibility.
+
+    Returns:
+    - int: The optimal number of clusters.
+    """
+    wcss = []  # Within-Cluster Sum of Squares
+    silhouette_scores = []  # Silhouette Scores
+    k_values = range(2, max_k + 1)  # Start from 2 clusters for silhouette
+
+    for k in k_values:
+        kmeans = KMeans(n_clusters=k, random_state=random_state)
+        kmeans.fit(data)
+        wcss.append(kmeans.inertia_)
+        silhouette_scores.append(silhouette_score(data, kmeans.labels_))
+
+    if method == "elbow":
+        # Calculate second derivative to find the "elbow"
+        wcss_diff = np.diff(wcss)
+        wcss_diff2 = np.diff(wcss_diff)
+        optimal_k = k_values[np.argmin(wcss_diff2) + 1]  # Offset for the diff
+    elif method == "silhouette":
+        # Choose k with the highest silhouette score
+        optimal_k = k_values[np.argmax(silhouette_scores)]
+    else:
+        raise ValueError("Invalid method. Choose 'elbow' or 'silhouette'.")
+
+    return optimal_k
+
+def plot_valid_pixels_percentage(ranges, percentage_per_angles_list, svm_folder_path):
+    """
+    Plots the percentage of valid pixels per angle range and saves the plot as a PNG file.
+
+    Parameters:
+    - ranges (tuple of tuples): Angle ranges for the x-axis.
+    - percentage_per_angles_list (list): Percentage values corresponding to the ranges.
+    - svm_folder_path (str): Directory to save the plot.
+    """
+    # Ensure ranges and percentage lists match
+    if len(ranges) != len(percentage_per_angles_list):
+        raise ValueError("Length of ranges and percentage_per_angles_list must match.")
+    
+    # Create the bar plot
+    x_labels = [f"{r[0]}-{r[1]}" for r in ranges]
+    plt.figure(figsize=(10, 6))
+    plt.bar(x_labels, percentage_per_angles_list, color='skyblue')
+    
+    # Add title and labels
+    plt.title("Percentage of Valid Pixels per Solar Incidence Angle Range", fontsize=14)
+    plt.xlabel("Angle Ranges (degrees)", fontsize=12)
+    plt.ylabel("Percentage (%)", fontsize=12)
+    plt.xticks(fontsize=10)
+    plt.yticks(fontsize=10)
+    plt.grid(axis='y', linestyle='--', alpha=0.7)
+    
+    # Save the plot
+    output_path = os.path.join(svm_folder_path, 'valid_pixels_per_angle.png')
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300)
+    plt.close()  # Close the plot to avoid display issues in non-interactive environments
+    print(f"Plot saved to: {output_path}")
+
 def collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, SVM_folder_name, no_data_mask, bands, PCA=False):
     
     scf_folder = os.path.join(curr_acquisition, SVM_folder_name)
@@ -157,6 +232,7 @@ def collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, 
     #ranges = ((0,20), (20, 30), (30, 40), (40, 50), (50, 60), (60, 70), (70, 80), (80, 90), (90, 180))
     empty = np.zeros(curr_scene_valid.shape, dtype='uint8')
     
+    percentage_per_angles_list = []
     for curr_range in ranges:
         print(curr_range)
         
@@ -165,6 +241,10 @@ def collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, 
         representative_pixels_mask_noSnow = np.array([])
     
         curr_angle_valid = np.logical_and(curr_scene_valid, np.logical_and(solar_incidence_angle >= curr_range[0], solar_incidence_angle < curr_range[1]))
+        
+        percentage_of_scene_valid =  np.sum(curr_angle_valid) / np.sum(curr_scene_valid)
+        
+        percentage_per_angles_list.append(percentage_of_scene_valid)
     
         curr_NDSI = read_masked_values(NDSI_path, curr_angle_valid)
         curr_NDVI = read_masked_values(NDVI_path, curr_angle_valid)
@@ -176,15 +256,15 @@ def collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, 
         # SNOW TRAINING
         if curr_range[0] >= 90:
             # Normalize indices and compute shadow metric
-            diff_B_NIR_low_perc, diff_B_NIR_high_perc = np.percentile(curr_diff_B_NIR, [2, 98])
-            shad_idx_low_perc, shad_idx_high_perc = np.percentile(curr_shad_idx, [2, 98])
+            diff_B_NIR_low_perc, diff_B_NIR_high_perc = np.percentile(curr_diff_B_NIR, [2, 95])
+            shad_idx_low_perc, shad_idx_high_perc = np.percentile(curr_shad_idx, [2, 95])
             curr_diff_B_NIR_norm = np.clip((curr_diff_B_NIR - diff_B_NIR_low_perc) / (diff_B_NIR_high_perc - diff_B_NIR_low_perc), 0, 1)
             curr_shad_idx_norm = np.clip((curr_shad_idx - shad_idx_low_perc) / (shad_idx_high_perc - shad_idx_low_perc), 0, 1)
             curr_score_snow_shadow = curr_diff_B_NIR_norm - curr_shad_idx_norm
-            threshold_shadow = np.percentile(curr_score_snow_shadow, 98)
+            threshold_shadow = np.percentile(curr_score_snow_shadow, 95)
             curr_valid_snow_mask_shadow = np.logical_and(curr_score_snow_shadow >= threshold_shadow, curr_NDSI > 0.7).flatten()
             if np.sum(curr_valid_snow_mask_shadow) > 10:
-                representative_pixels_mask_snow = get_representative_pixels(curr_bands, curr_valid_snow_mask_shadow, k=3, n_closest=10)
+                representative_pixels_mask_snow = get_representative_pixels(curr_bands, curr_valid_snow_mask_shadow, k=5, n_closest=10)
         else:
             # Normalize indices and compute sun metric
             NDSI_low_perc, NDSI_high_perc = np.percentile(curr_NDSI[np.logical_not(np.isnan(curr_NDSI))], [1, 99])
@@ -206,7 +286,7 @@ def collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, 
             curr_valid_no_snow_mask_shadow = (curr_score_snow_shadow <= threshold_shadow_no_snow).flatten()
             
             if np.sum(curr_valid_no_snow_mask_shadow) > 10:
-                representative_pixels_mask_noSnow = get_representative_pixels(curr_bands, curr_valid_no_snow_mask_shadow, k=3, n_closest=10) * 2
+                representative_pixels_mask_noSnow = get_representative_pixels(curr_bands, curr_valid_no_snow_mask_shadow, k=5, n_closest=10) * 2
         else:
             curr_valid_no_snow_mask = (curr_NDSI < 0).flatten()
             
@@ -225,7 +305,7 @@ def collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, 
         print(str(np.sum(representative_pixels_mask_snow.flatten())) + ' SNOW PIXELS')
         print(str(np.sum(representative_pixels_mask_noSnow.flatten() / 2)) + ' NO SNOW PIXELS')
 
-
+    
     # Convert points where result == 1 or 2 to a shapefile
     points = []
     values = []
@@ -237,6 +317,9 @@ def collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, 
 
     gdf = gpd.GeoDataFrame({"value": values}, geometry=points, crs=src.crs)
     svm_folder_path = os.path.join(curr_acquisition, SVM_folder_name)
+    
+    plot_valid_pixels_percentage(ranges, percentage_per_angles_list, svm_folder_path)
+    
     shapefile_path = os.path.join(svm_folder_path, 'representative_pixels_for_training_samples.shp')
     gdf.to_file(shapefile_path, driver="ESRI Shapefile")
     
