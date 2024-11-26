@@ -236,14 +236,16 @@ def Plot_TS(time_series_folder, png_folder, start_date, end_date, scf_subfolder_
 
 #time_series_folder = '/mnt/CEPH_PROJECTS/PROSNOW/SENTINEL-2/32TPT/Reprojected_Kuhtal'
 #time_series_folder = '/mnt/CEPH_PROJECTS/CRYOMON/Riccardo/ALP_SNOW/Test_site_harmonization/Rofental'
-time_series_folder = '/mnt/CEPH_PROJECTS/PROSNOW/SENTINEL-2/32TPS/Reprojected_Senales_catchment'
+# time_series_folder = '/mnt/CEPH_PROJECTS/PROSNOW/SENTINEL-2/32TPS/Reprojected_Senales_catchment'
+# png_folder = os.path.join('/mnt/CEPH_PROJECTS/PROSNOW/SENTINEL-2/32TPS', 'Reprojected_Senales_catchment_PNGs')
+
 #time_series_folder = '/mnt/CEPH_PROJECTS/PROSNOW/research_activity/SIERRA_NEVADA/Sentinel-2_proc/02_Reprojected_USCASF'
-#time_series_folder = '/mnt/CEPH_PROJECTS/PROSNOW/SENTINEL-2/32TNS/02_Reprojected_Dischma'
-png_folder = os.path.join('/mnt/CEPH_PROJECTS/PROSNOW/SENTINEL-2/32TPS', 'Reprojected_Senales_catchment_PNGs')
+time_series_folder = '/mnt/CEPH_PROJECTS/ALPSNOW/Katharina/scf_sierra'
+png_folder = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Katharina/', 'scf_sierra_PNGs')
 #png_folder = os.path.join('/mnt/CEPH_PROJECTS/CRYOMON/Riccardo/ALP_SNOW', '01_Kuhtal_PNG_FSC_20m_v3_SCALED')
 #png_folder = os.path.join('/mnt/CEPH_PROJECTS/CRYOMON/Riccardo/ALP_SNOW', '02_SIERRA_USCASF_S2_PNG_FSC_SCALED_manRem_3')
 
-scf_subfolder_name = 'prova_cristian_1'
+scf_subfolder_name = 'test_new_SFv4'
 
 
 start_date = '20141001'

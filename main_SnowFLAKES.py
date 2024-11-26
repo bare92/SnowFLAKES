@@ -230,7 +230,7 @@ def main():
         
         # Step 10: Collect training data and train the SVM model
         shapefile_path, training_mask_path = collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, SVM_folder_name, no_data_mask, bands)
-        
+        counter_to_exit = 0
         while True:
             
             print('TRAINING')
@@ -251,8 +251,10 @@ def main():
                 ndsi_data = ndsi_src.read(1)  # Reading first band
          
             # Check condition
-            if np.sum((scf_data > 0) & (scf_data <= 100) & (ndsi_data < 0)) == 0:
+            if np.sum((scf_data > 0) & (scf_data <= 100) & (ndsi_data < 0)) == 0 or counter_to_exit >= 10:
                 break  # Exit the loop if no points meet the condition
+                
+            counter_to_exit += 1
 
         print("Process completed. Condition met, and no points found where SCF > 0 and NDSI < 0.")
             

@@ -58,7 +58,7 @@ def read_masked_values(geotiff_path, mask, bands=None):
     return masked_values
 
 
-def get_representative_pixels(bands_data, valid_mask, k='auto', n_closest='auto'):
+def get_representative_pixels(bands_data, valid_mask, sample_count = 50, k='auto', n_closest='auto'):
     """
     Selects representative "no snow" pixels by clustering and distance to cluster centroids.
     Saves the output as a raster.
@@ -90,7 +90,7 @@ def get_representative_pixels(bands_data, valid_mask, k='auto', n_closest='auto'
     if k == 'auto':
         k = find_optimal_k(normalized_pixels, max_k=10, method="elbow")
     if n_closest == 'auto':
-        n_closest = int(50 / k)
+        n_closest = int(sample_count / k)
 
     # Perform K-means clustering on "no snow" pixels
     kmeans = KMeans(n_clusters=k, random_state=0)
@@ -193,7 +193,40 @@ def plot_valid_pixels_percentage(ranges, percentage_per_angles_list, svm_folder_
     plt.close()  # Close the plot to avoid display issues in non-interactive environments
     print(f"Plot saved to: {output_path}")
 
-def collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, SVM_folder_name, no_data_mask, bands, PCA=False):
+def calculate_training_samples(solar_incidence_angle, ranges, total_samples):
+    """
+    Calculate the number of training samples for each angle range proportional to the pixel distribution.
+
+    Parameters:
+        solar_incidence_angle (np.ndarray): 2D array representing the solar incidence angle map.
+        ranges (list of tuple): List of angle ranges (start, end).
+        total_samples (int): Total number of training samples to distribute.
+
+    Returns:
+        dict: A dictionary with ranges as keys and the number of training samples as values.
+    """
+    # Flatten the angle map for easier processing
+    flattened_map = solar_incidence_angle.flatten()
+    
+    # Initialize a dictionary to store the count for each range
+    range_pixel_counts = {r: 0 for r in ranges}
+    
+    # Count pixels in each range
+    for r in ranges:
+        range_pixel_counts[r] = np.sum((flattened_map >= r[0]) & (flattened_map < r[1]))
+    
+    # Calculate the total number of pixels considered
+    total_pixels = sum(range_pixel_counts.values())
+    
+    # Calculate the proportion of samples for each range
+    range_samples = {
+        r: int(total_samples * (count / total_pixels)) + 20 if total_pixels > 0 else 0
+        for r, count in range_pixel_counts.items()
+    }
+    
+    return range_samples
+
+def collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, SVM_folder_name, no_data_mask, bands, PCA=False, total_samples = 500):
     
     scf_folder = os.path.join(curr_acquisition, SVM_folder_name)
     if not os.path.exists(scf_folder):
@@ -226,15 +259,16 @@ def collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, 
     curr_scene_valid = np.logical_not(np.logical_or.reduce((cloud_mask == 2, water_mask == 1, no_data_mask)))
     
     ranges = ((0,20), (20, 45), (45, 70), (70, 90), (90, 180))
-    
+    range_samples = calculate_training_samples(solar_incidence_angle, ranges, total_samples)
     #ranges = ((70, 90))
     
     #ranges = ((0,20), (20, 30), (30, 40), (40, 50), (50, 60), (60, 70), (70, 80), (80, 90), (90, 180))
     empty = np.zeros(curr_scene_valid.shape, dtype='uint8')
     
     percentage_per_angles_list = []
-    for curr_range in ranges:
+    for curr_range, sample_count in range_samples.items():
         print(curr_range)
+        print(sample_count)
         
         # Initialize as empty arrays
         representative_pixels_mask_snow = np.array([])
@@ -264,7 +298,7 @@ def collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, 
             threshold_shadow = np.percentile(curr_score_snow_shadow, 95)
             curr_valid_snow_mask_shadow = np.logical_and(curr_score_snow_shadow >= threshold_shadow, curr_NDSI > 0.7).flatten()
             if np.sum(curr_valid_snow_mask_shadow) > 10:
-                representative_pixels_mask_snow = get_representative_pixels(curr_bands, curr_valid_snow_mask_shadow, k=5, n_closest=10)
+                representative_pixels_mask_snow = get_representative_pixels(curr_bands, curr_valid_snow_mask_shadow, sample_count = int(sample_count/2), k=5, n_closest='auto')
         else:
             # Normalize indices and compute sun metric
             NDSI_low_perc, NDSI_high_perc = np.percentile(curr_NDSI[np.logical_not(np.isnan(curr_NDSI))], [1, 99])
@@ -278,7 +312,7 @@ def collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, 
             curr_valid_snow_mask = np.logical_and(curr_score_snow_sun >= threshold, curr_NDSI > 0.7).flatten()
             
             if np.sum(curr_valid_snow_mask) > 10:
-                representative_pixels_mask_snow = get_representative_pixels(curr_bands, curr_valid_snow_mask, k=5, n_closest=10)
+                representative_pixels_mask_snow = get_representative_pixels(curr_bands, curr_valid_snow_mask, sample_count = int(sample_count/2), k=5, n_closest='auto')
     
         ## NO snow TRAINING
         if curr_range[0] >= 90:
@@ -286,12 +320,12 @@ def collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, 
             curr_valid_no_snow_mask_shadow = (curr_score_snow_shadow <= threshold_shadow_no_snow).flatten()
             
             if np.sum(curr_valid_no_snow_mask_shadow) > 10:
-                representative_pixels_mask_noSnow = get_representative_pixels(curr_bands, curr_valid_no_snow_mask_shadow, k=5, n_closest=10) * 2
+                representative_pixels_mask_noSnow = get_representative_pixels(curr_bands, curr_valid_no_snow_mask_shadow, sample_count = int(sample_count/2), k=5, n_closest='auto') * 2
         else:
             curr_valid_no_snow_mask = (curr_NDSI < 0).flatten()
             
             if np.sum(curr_valid_no_snow_mask) > 10:
-                representative_pixels_mask_noSnow = get_representative_pixels(curr_bands, curr_valid_no_snow_mask, k=10, n_closest=5) * 2
+                representative_pixels_mask_noSnow = get_representative_pixels(curr_bands, curr_valid_no_snow_mask, sample_count = int(sample_count/2), k=10, n_closest='auto') * 2
     
         # Check if masks have been assigned; if not, set as zeros
         if representative_pixels_mask_snow.size == 0:
