@@ -8,6 +8,7 @@ Created on Tue Nov  5 16:31:29 2024
 
 import numpy as np
 from training_collection import *
+from utilities import *
 from sklearn import preprocessing
 from sklearn.svm import SVC, LinearSVC
 from sklearn.metrics.pairwise import rbf_kernel, pairwise_kernels, linear_kernel, cosine_similarity
@@ -17,6 +18,7 @@ import pickle
 from joblib import Parallel, delayed
 from rasterio.features import geometry_mask
 from scipy.spatial import distance
+from rasterio.warp import transform_bounds
 
 
 def model_training(curr_acquisition, shapefile_path, SVM_folder_name, gamma=None, perform_pca = False):
@@ -107,6 +109,8 @@ def SCF_dist_SV(curr_acquisition, curr_aux_folder, auxiliary_folder_path, no_dat
     
     path_cloud_mask = glob.glob(os.path.join(curr_aux_folder, '*cloud_Mask.tif'))[0]
     path_water_mask = glob.glob(os.path.join(auxiliary_folder_path, '*Water_Mask.tif'))[0] 
+    diff_B_NIR_path = glob.glob(os.path.join(curr_aux_folder, '*diffBNIR.tif'))[0]
+    shadow_mask_path = glob.glob(os.path.join(curr_aux_folder, '*shadow_mask.tif'))[0]
     
     
     if perform_pca:
@@ -131,9 +135,15 @@ def SCF_dist_SV(curr_acquisition, curr_aux_folder, auxiliary_folder_path, no_dat
     with rasterio.open(path_water_mask) as src:
         water_mask = src.read(1)  # Read the water mask (first band)
         
+    with rasterio.open(shadow_mask_path) as src:
+        shadow_mask = src.read(1)  # Read the shadow mask (first band)
+        
+    with rasterio.open(diff_B_NIR_path) as src:
+        diff_B_NIR = src.read(1)  
+        
     with rasterio.open(bands_path) as src:
-        bands = src.read()  
-        profile = src.profile
+       bands = src.read()  
+       profile = src.profile
         
     profile.update(dtype='uint8', count=1, compress='lzw', nodata=255, driver='GTiff')
     
@@ -145,7 +155,7 @@ def SCF_dist_SV(curr_acquisition, curr_aux_folder, auxiliary_folder_path, no_dat
     
     valid_mask = np.logical_not(no_data_mask)
     
-    FSC_SVM_map_path = os.path.join(scf_folder, os.path.basename(bands_path)[:-11] + '_SnowFLAKES_map.tif')
+    FSC_SVM_map_path = os.path.join(scf_folder, os.path.basename(bands_path)[:-11] + '_SnowFLAKES.tif')
 
     # Check if the map file exists and overwrite if specified
     if os.path.exists(FSC_SVM_map_path) and not overwrite:
@@ -178,6 +188,13 @@ def SCF_dist_SV(curr_acquisition, curr_aux_folder, auxiliary_folder_path, no_dat
     SCF_map = 255 * np.ones(np.shape(valid_mask))
     SCF_map[valid_mask] = SCF_Image_array.flatten()
     
+    #scf correction based on diff B NIR and shadow mask
+    
+    pixels_to_correct = np.logical_and.reduce((valid_mask, diff_B_NIR > 0, diff_B_NIR < 0.06, shadow_mask == 1, SCF_map > 0, SCF_map < 50))
+    
+    SCF_map[np.logical_and(valid_mask, SCF_map < 10)] = 0
+    
+    SCF_map[pixels_to_correct] = 0
     SCF_map[cloud_mask == 2] = 205
     SCF_map[water_mask == 1] = 210
     SCF_map[water_mask == 255] = 210
@@ -190,6 +207,10 @@ def SCF_dist_SV(curr_acquisition, curr_aux_folder, auxiliary_folder_path, no_dat
     
     print(f"SCF map saved to {FSC_SVM_map_path}")
     return FSC_SVM_map_path
+
+
+def glaciers_svm(svmModel, svmMatrix):
+    return svmModel.predict(svmMatrix)
 
 
     
@@ -254,5 +275,92 @@ def check_scf_results(FSC_SVM_map_path, shapefile_path, curr_aux_folder, curr_ac
     return shapefile_path  
 
 
+def glaciers_classifier(FSC_SVM_map_path, auxiliary_folder_path, glaciers_model_svm, curr_acquisition, Nprocesses=8, overwrite=False):
+    
+    glaciers_mask_path = glob.glob(os.path.join(auxiliary_folder_path, '*glacier_mask.tif'))[0]
+    
+    emisphere = get_hemisphere(FSC_SVM_map_path)
+    
+    bands_path = glob.glob(os.path.join(curr_acquisition, '*scf.vrt'))[0]
+      
+    with rasterio.open(bands_path) as src:
+       bands = src.read()  
+       
+       
+    with rasterio.open(glaciers_mask_path) as src:
+        glaciers_mask = src.read(1)  # Read the cloud mask (first band)
+        
+    with rasterio.open(FSC_SVM_map_path) as src:
+        SCF_map = src.read(1)  # Read the cloud mask (first band)
+        profile = src.profile
+        
+    # Load the SVM model
+    svm_dict = pickle.load(open(glaciers_model_svm, 'rb'), encoding='latin1')
+    
+    valid_mask_glaciers = np.logical_and(glaciers_mask == 1, SCF_map <= 100)
+    
+    scf_folder = os.path.dirname(FSC_SVM_map_path)
+    FSC_glaciers_SVM_map_path = os.path.join(scf_folder, os.path.basename(bands_path)[:-11] + '_SnowFLAKES_GL.tif')
 
+    # Check if the map file exists and overwrite if specified
+    if os.path.exists(FSC_glaciers_SVM_map_path) and not overwrite:
+        print(f"{FSC_glaciers_SVM_map_path} already exists. Skipping creation.")
+        return FSC_glaciers_SVM_map_path
+    
+    print('Image classification...\n')
+    
+    Image_array_to_classify = bands[:, valid_mask_glaciers].transpose()
+    normalizer = svm_dict['normalizer']
+    Samples_to_classify = normalizer.transform(Image_array_to_classify)
+    
+    # Divide Samples_to_classify into blocks for parallel processing
+    samplesBlocks = np.array_split(Samples_to_classify, Nprocesses, axis=0)
+    
+    # Calculate the score
+    glImage_arrayBlocks = Parallel(n_jobs=Nprocesses, verbose=10)(
+        delayed(glaciers_svm)(svm_dict['svmModel'], samplesBlocks[i]) for i in range(len(samplesBlocks))
+    )
+     
+    
+    glImage_array = np.concatenate(glImage_arrayBlocks, axis=0)
+    
+    glImage_array[glImage_array == 1] = 100
+    glImage_array[glImage_array == 2] = 215
+    glImage_array[glImage_array == 3] = 0
+    
+    SCF_map[valid_mask_glaciers] = glImage_array
+    SCF_map[valid_mask_glaciers] = glImage_array
+    
+    
+    # Write the SCF map to a file, overwriting if necessary
+    with rasterio.open(FSC_glaciers_SVM_map_path, 'w', **profile) as dst:
+        dst.write(SCF_map, 1)
+    
+    print(f"SCF map saved to {FSC_glaciers_SVM_map_path}")
+    return FSC_glaciers_SVM_map_path
+
+
+   
+
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
 

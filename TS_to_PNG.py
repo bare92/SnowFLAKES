@@ -18,6 +18,7 @@ import rasterio
 from rasterio.plot import show
 import matplotlib
 import pandas as pd
+from matplotlib import colormaps
 
 matplotlib.use('Agg')
 
@@ -35,11 +36,13 @@ def save_scene_png(time_series_folder, png_folder, start_date, end_date, scf_sub
     """
     def create_colormap():
         """Creates a custom colormap for snow cover visualization."""
-        viridis = cm.get_cmap('cool', 255)
-        top = cm.get_cmap('cool', 101)
-        bottom = cm.get_cmap('Blues', 155)
-        newcolors = np.vstack((top(np.linspace(0, 1, 101)),
-                               bottom(np.linspace(0, 1, 155))))
+        viridis = colormaps['cool']
+        top = colormaps['cool']
+        bottom = colormaps['Blues']
+        newcolors = np.vstack((
+            top(np.linspace(0, 1, 101)),
+            bottom(np.linspace(0, 1, 155))
+        ))
         newcolors[:1, :] = np.array([0, 0.3, 0, 1]) 
         newcolors[205, :] = [150 / 256, 150 / 256, 150 / 256, 1]  # Grey for clouds
         newcolors[255, :] = [0, 0, 0, 1]  # Black for no data
@@ -64,14 +67,22 @@ def save_scene_png(time_series_folder, png_folder, start_date, end_date, scf_sub
     colormap = create_colormap()
 
     # Find images of interest
-    images_all = sorted(glob.glob(os.path.join(time_series_folder, '*', scf_subfolder_name, '*SnowFLAKES_map*.tif')))
+    images_all = sorted(glob.glob(os.path.join(time_series_folder, '*', scf_subfolder_name, '*SnowFLAKES_GL*.tif')))
     images_filtered = [f for f in images_all if start_date <= os.path.basename(f).split('_')[2].split('T')[0] <= end_date]
 
     for curr_map in images_filtered:
+        
+        
         sensor = check_Mission(curr_map)
         date = extract_date(sensor, curr_map)
         
-
+        save_path = os.path.join(png_folder, f"{date}_scene.png")
+        
+        if os.path.exists(save_path):
+            
+            print('SCENE ALREADY SAVED')
+            continue
+            
         try:
             corrispondent_vrt = glob.glob(os.path.join(time_series_folder, '*', f'*{date}*scf.vrt'))[0]
         except IndexError:
@@ -100,6 +111,8 @@ def save_scene_png(time_series_folder, png_folder, start_date, end_date, scf_sub
         axes[0].axis('off')
         colorbar = fig.colorbar(cm.ScalarMappable(cmap=colormap), ax=axes[0])
         colorbar.set_label("Snow Cover Classes")
+        
+        RGB_stack[np.isnan(RGB_stack)] = 0
 
         # RGB composite
         RGB_stack_normalized = RGB_stack / np.percentile(RGB_stack, 99, axis=(1, 2), keepdims=True)
@@ -109,7 +122,7 @@ def save_scene_png(time_series_folder, png_folder, start_date, end_date, scf_sub
         axes[1].axis('off')
 
         # Save the figure
-        save_path = os.path.join(png_folder, f"{date}_scene.png")
+        
         plt.tight_layout()
         plt.savefig(save_path, dpi=300)
         plt.close(fig)
@@ -234,22 +247,22 @@ def Plot_TS(time_series_folder, png_folder, start_date, end_date, scf_subfolder_
     
 
 
-#time_series_folder = '/mnt/CEPH_PROJECTS/PROSNOW/SENTINEL-2/32TPT/Reprojected_Kuhtal'
-#time_series_folder = '/mnt/CEPH_PROJECTS/CRYOMON/Riccardo/ALP_SNOW/Test_site_harmonization/Rofental'
-# time_series_folder = '/mnt/CEPH_PROJECTS/PROSNOW/SENTINEL-2/32TPS/Reprojected_Senales_catchment'
-# png_folder = os.path.join('/mnt/CEPH_PROJECTS/PROSNOW/SENTINEL-2/32TPS', 'Reprojected_Senales_catchment_PNGs')
+## MAIPO
+time_series_folder = '/mnt/CEPH_PROJECTS/PROSNOW/MRI_Andes/Sentinel2/Maipo/merged'
+png_folder = os.path.join('/mnt/CEPH_PROJECTS/PROSNOW/MRI_Andes/Sentinel2/Maipo', 'scf_Maipo_PNGs4')
+scf_subfolder_name = 'SnowFLAKES_4'
+## SIERRA
+# time_series_folder = '/mnt/CEPH_PROJECTS/ALPSNOW/Katharina/scf_sierra'
+# png_folder = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Katharina/', 'scf_Sierra_PNGs2')
+## Azufre
+time_series_folder = '/mnt/CEPH_PROJECTS/SNOWCOP/Glaciers/Azufre/calibrated'
+png_folder = os.path.join('/mnt/CEPH_PROJECTS/SNOWCOP/Glaciers/Azufre/', 'scf_Azufre_PNGs')
+scf_subfolder_name = 'SnowFLAKES_2'
 
-#time_series_folder = '/mnt/CEPH_PROJECTS/PROSNOW/research_activity/SIERRA_NEVADA/Sentinel-2_proc/02_Reprojected_USCASF'
-time_series_folder = '/mnt/CEPH_PROJECTS/ALPSNOW/Katharina/scf_sierra'
-png_folder = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Katharina/', 'scf_sierra_PNGs')
-#png_folder = os.path.join('/mnt/CEPH_PROJECTS/CRYOMON/Riccardo/ALP_SNOW', '01_Kuhtal_PNG_FSC_20m_v3_SCALED')
-#png_folder = os.path.join('/mnt/CEPH_PROJECTS/CRYOMON/Riccardo/ALP_SNOW', '02_SIERRA_USCASF_S2_PNG_FSC_SCALED_manRem_3')
-
-scf_subfolder_name = 'test_new_SFv4'
 
 
-start_date = '20141001'
-end_date = '20250931'
+start_date = '20101223'
+end_date = '20251223'
 
 plot_ts = False
 save_png = True

@@ -26,6 +26,7 @@ from rasterio.crs import CRS
 from pyproj import Transformer
 from pathlib import Path
 
+
 def create_auxiliary_folder(working_folder, folder_name = '01_TEST_auxiliary_folder'):
     """
     Creates an auxiliary folder in the working directory for storing permanent layers (e.g., DEM, masks).
@@ -244,136 +245,91 @@ def water_mask_cutting(water_mask_path, ref_img_path,auxiliary_folder_path):
                     
     return target_wb_mask_path;
 
-def glacier_mask_automatic(water_mask_path):
+def glacier_mask_cutting(external_glacier_mask_path, water_mask_path):
     """
-    Automatically selects the glacier mask from the global NASA inventory taken from 
-    https://daacdata.apps.nsidc.org/pub/DATASETS/nsidc0770_rgi_v6/. 
-    If the area does not contain glaciers, it returns a raster layer filled with zeros.
+    Generates a glacier mask raster file from a shapefile and water mask.
 
     Parameters
     ----------
+    external_glacier_mask_path : str
+        Path to the shapefile containing glacier outlines.
     water_mask_path : str
-        Path to the water mask.
-    ancillary_folder : bool, optional
-        If True, the glacier mask will be stored in the ancillary folder (default is False).
-    
+        Path to the water mask raster.
+
     Returns
     -------
     str
-        Path to the .tif file containing the glacier mask.
+        Path to the generated glacier mask raster file.
     """
+    # Define output paths
+    base_path = os.path.dirname(water_mask_path)
+    glacier_shp_path = os.path.join(base_path, 'glacier_mask.shp')
+    glacier_mask_path = os.path.join(base_path, 'glacier_mask.tif')
     
-    # Define target paths for glacier shapefile and raster
-    base_path = water_mask_path[:-14]
-    target_glacier_shp_mask_path = base_path + 'glacier.shp'
-    target_glacier_raster_mask_path = base_path + 'glacier.tif'
     
-    # If glacier raster mask already exists, return its path
-    if os.path.exists(target_glacier_raster_mask_path):
-        return target_glacier_raster_mask_path
-    
-    # Define path to glacier inventory data
-    glacier_inventory_folder = "/mnt/CEPH_PROJECTS/ALPSNOW/Nicola/Glacer_mask/Glacier_inventory"
-    shapefiles = glob.glob(glacier_inventory_folder + os.sep + "*/*shp")
-    
-    # Initialize lists to store extent information of glacier shapefiles
-    extents = {'xmin': [], 'ymin': [], 'xmax': [], 'ymax': [], 'filename': []}
-    polygons = []
-    
-    # Loop over glacier shapefiles to store extents and filenames
-    for shape in shapefiles:
-        shapefile = ogr.Open(shape)
-        layer = shapefile.GetLayer(0)
-        extent = layer.GetExtent()
-        
-        # Store extent information
-        extents['xmin'].append(extent[0])
-        extents['ymin'].append(extent[2])
-        extents['xmax'].append(extent[1])
-        extents['ymax'].append(extent[3])
-        extents['filename'].append(shape)
-        
-        # Create and store corresponding polygons
-        polygons.append(Polygon([(extent[0], extent[2]), (extent[1], extent[2]), 
-                                 (extent[1], extent[3]), (extent[0], extent[3])]))
-    
-    # Create a GeoDataFrame for extent information
-    extent_df = pd.DataFrame(extents)
-    gdf = gpd.GeoDataFrame(extent_df, crs="EPSG:4326", geometry=polygons)
-    
-    # Open the water mask image and get its extent and projection
+    # Check if the raster mask already exists
+    if os.path.exists(glacier_mask_path):
+        return glacier_mask_path
+
+    # Open the water mask and extract extent and CRS
     img, img_info = open_image(water_mask_path)
-    d = gdal.Open(water_mask_path)
-    proj = osr.SpatialReference(wkt=d.GetProjection())
+    raster = gdal.Open(water_mask_path)
+    proj = osr.SpatialReference(wkt=raster.GetProjection())
     epsg_code = proj.GetAttrValue("AUTHORITY", 1)
-    resolution = img_info['geotransform'][1]
-    img_res = str(resolution)
-    
-    # Extract image extent based on EPSG code (whether WGS 84 or another CRS)
-    if epsg_code == "4326":
-        E_min, N_min, E_max, N_max = img_info['extent']
-    else:
-        srIn = osr.SpatialReference(str(img_info['projection']))
-       
-        srOut = osr.SpatialReference(str(open_image(water_mask_path)[1]['projection']))
-        
-        E_min_meter, N_min_meter, E_max_meter, N_max_meter = img_info['extent']
-        N_min, E_min = reproj_point(E_min_meter, N_min_meter, srIn, srOut)
-        N_max, E_max = reproj_point(E_max_meter, N_max_meter, srIn, srOut)
-        resolution /= 100000  # Adjust resolution for meters-to-degrees conversion
-        img_res = str(resolution)
-    
-    # Calculate the geometric center of the extent
-    E_mean = (E_min + E_max) / 2
-    N_mean = (N_min + N_max) / 2
-    center_point = Point(E_mean, N_mean)
-    
-    # Check if any glacier polygon contains the center of the image extent
-    if gdf['geometry'].contains(center_point).any():
-        glacier_outlines_shp_path = gdf['filename'][gdf['geometry'].contains(center_point)].values[0]
-    else:
-        # Fallback glacier shapefile for areas with no glaciers
-        glacier_outlines_shp_path = "/mnt/CEPH_PROJECTS/ALPSNOW/Nicola/Glacer_mask/Alps_glacier/c3s_gi_rgi11_s2_2015_v2.shp"
-    
-    # Create a polygon corresponding to the image extent
-    extent_polygon = Polygon([(E_min, N_min), (E_min, N_max), (E_max, N_max), (E_max, N_min)])
-    poly_gdf = gpd.GeoDataFrame([1], geometry=[extent_polygon], crs="EPSG:4326")
-    
-    # Read and clip the glacier outlines shapefile
-    glacier_outlines_shp = gpd.read_file(glacier_outlines_shp_path)
-    
-    if epsg_code == "4326":
-        glacier_outlines_shp_reproj = glacier_outlines_shp.to_crs("EPSG:4326")
-        glacier_outlines_shp_reproj['geometry'] = glacier_outlines_shp_reproj.buffer(0)  # Fix any geometry issues
-        clipped_glaciers = gpd.clip(glacier_outlines_shp_reproj, poly_gdf)
-    else:
-        clipped_glaciers = gpd.clip(glacier_outlines_shp, poly_gdf)
-    
-    # If the clipped glaciers are not empty, rasterize the glacier outlines
+    crs_epsg = f"EPSG:{epsg_code}"
+
+    # Get the extent and resolution from the water mask
+    extent = img_info['extent']
+    geotransform = img_info['geotransform']
+    resolution = geotransform[1]
+    E_min, N_min, E_max, N_max = extent
+
+    # Create a bounding box polygon from the extent
+    polygon = Polygon([
+        (E_min, N_min), (E_min, N_max),
+        (E_max, N_max), (E_max, N_min),
+        (E_min, N_min)
+    ])
+    bounding_box = gpd.GeoDataFrame(geometry=[polygon], crs=crs_epsg)
+
+    # Load and reproject the glacier shapefile
+    glacier_gdf = gpd.read_file(external_glacier_mask_path)
+    glacier_gdf = glacier_gdf.to_crs(crs_epsg)
+
+    # Validate and fix geometries
+    glacier_gdf['geometry'] = glacier_gdf['geometry'].apply(
+        lambda geom: geom.buffer(0) if geom.is_valid else geom
+    )
+
+    # Clip glacier shapefile to the bounding box
+    clipped_glaciers = gpd.clip(glacier_gdf, bounding_box)
+
     if not clipped_glaciers.empty:
-        clipped_glaciers.to_file(target_glacier_shp_mask_path)
-        
-        if epsg_code == "4326":
-            # Rasterize glacier outlines
-            rasterize_cmd = f"gdal_rasterize -burn 1 -a_nodata 0 -te {E_min} {N_min} {E_max} {N_max} -tr {img_res} {img_res} {target_glacier_shp_mask_path} {target_glacier_raster_mask_path}"
-            os.system(rasterize_cmd)
-        else:
-            temp_file = target_glacier_raster_mask_path.replace(".tif", "_temp.tif")
-            rasterize_cmd = f"gdal_rasterize -burn 1 -a_nodata 0 -te {E_min} {N_min} {E_max} {N_max} -tr {img_res} {img_res} {target_glacier_shp_mask_path} {temp_file}"
-            os.system(rasterize_cmd)
-            
-            # Reproject the raster to the original CRS
-            warp_cmd = f"gdalwarp -s_srs EPSG:4326 -t_srs EPSG:{epsg_code} -te {E_min_meter} {N_min_meter} {E_max_meter} {N_max_meter} -r near -tr {resolution*100000} {resolution*100000} {temp_file} {target_glacier_raster_mask_path}"
-            os.system(warp_cmd)
-            
-            os.remove(temp_file)
-            os.remove(target_glacier_shp_mask_path)
+        # Save the clipped shapefile
+        clipped_glaciers.to_file(glacier_shp_path)
+
+        # Rasterize the shapefile
+        cmd = (
+            f"gdal_rasterize -burn 1 -a_nodata 0 "
+            f"-te {E_min} {N_min} {E_max} {N_max} "
+            f"-tr {resolution} {resolution} "
+            f"{glacier_shp_path} {glacier_mask_path}"
+        )
+        os.system(cmd)
     else:
-        # If no glaciers are found, create a raster filled with zeros
-        glacier_mask = np.zeros_like(img)
-        save_image(glacier_mask, target_glacier_raster_mask_path, 'GTiff', 1, img_info['geotransform'], img_info['projection'])
-    
-    return target_glacier_raster_mask_path
+        # Create an empty raster if no glaciers are found
+        empty_glacier_mask = np.zeros_like(img)
+        save_image(
+            empty_glacier_mask,
+            glacier_mask_path,
+            driver='GTiff',
+            bands=1,
+            geotransform=geotransform,
+            projection=raster.GetProjection()
+        )
+
+    return glacier_mask_path
+
 
 def dem_downloader(sub_areas, ref_img_path, resolution, auxiliary_folder_path, buffer=0.02):
     """
@@ -929,7 +885,7 @@ def generate_shadow_mask(curr_aux_folder, auxiliary_folder_path, no_data_mask, N
     # Shadow pixels maximize index1 and index2, minimize ndvi and evi
     shadow_score = (index1_norm + index2_norm) - (ndvi_norm + evi_norm + NIR)
     
-    threshold = np.percentile(shadow_score[curr_angle_valid], [5, 95])[0]
+    threshold = np.percentile(shadow_score[curr_angle_valid], [10, 95])[0]
     #plt.hist(shadow_score.flatten(), bins=50)
     # Create shadow mask: positive values indicate shadow
     shadow_mask = (shadow_score > threshold).astype(np.uint8)
@@ -943,11 +899,13 @@ def generate_shadow_mask(curr_aux_folder, auxiliary_folder_path, no_data_mask, N
     })
     
     # Save shadow mask to GeoTIFF
-    output_path = os.path.join(curr_aux_folder, 'shadow_mask.tif')
-    with rasterio.open(output_path, "w", **meta) as dst:
+    shadow_mask_path = os.path.join(curr_aux_folder, 'shadow_mask.tif')
+    with rasterio.open(shadow_mask_path, "w", **meta) as dst:
         dst.write(shadow_mask, 1)
     
-    print(f"Shadow mask saved to {output_path}")
+    print(f"Shadow mask saved to {shadow_mask_path}")
+    
+    return shadow_mask_path
     
     
     

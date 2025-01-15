@@ -1,7 +1,7 @@
 Name,Value,,
 working_folder,/mnt/CEPH_PROJECTS/ALPSNOW/Katharina/scf_sierra,,
-Start Date,20101216,,20220113
-End Date,20251216,,
+Start Date,20201119,,20220113
+End Date,20201119,,
 resolution,30,,
 PCA,no,,
 ,,,
@@ -22,7 +22,7 @@ no_data_value,-3.2768,,
 ,,,
 ,,,
 ,,,
-SVM_folder_name,test_new_SFv4,,
+SVM_folder_name,test_new_SFv8,,
 NDSI snow pre class,0.5,,
 NDSI min to snow sun,0.7,,
 NDSI max to no snow sun,0,,

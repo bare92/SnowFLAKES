@@ -226,6 +226,158 @@ def calculate_training_samples(solar_incidence_angle, ranges, total_samples):
     
     return range_samples
 
+def collect_trainings2(curr_acquisition, curr_aux_folder, auxiliary_folder_path, SVM_folder_name, no_data_mask, bands, PCA=False, total_samples = 500):
+    
+    scf_folder = os.path.join(curr_acquisition, SVM_folder_name)
+    if not os.path.exists(scf_folder):
+        os.makedirs(scf_folder)
+        
+    sensor = get_sensor(os.path.basename(curr_acquisition))
+    
+    path_cloud_mask = glob.glob(os.path.join(curr_aux_folder, '*cloud_Mask.tif'))[0]
+    path_water_mask = glob.glob(os.path.join(auxiliary_folder_path, '*Water_Mask.tif'))[0]
+    solar_incidence_angle_path = glob.glob(os.path.join(curr_aux_folder, '*solar_incidence_angle.tif'))[0]
+    NDSI_path = glob.glob(os.path.join(curr_aux_folder, '*NDSI.tif'))[0]
+    NDVI_path = glob.glob(os.path.join(curr_aux_folder, '*NDVI.tif'))[0]
+    diff_B_NIR_path = glob.glob(os.path.join(curr_aux_folder, '*diffBNIR.tif'))[0]
+    shad_idx_path = glob.glob(os.path.join(curr_aux_folder, '*shad_idx.tif'))[0]
+    shadow_mask_path = glob.glob(os.path.join(curr_aux_folder, '*shadow_mask.tif'))[0]
+        
+    
+    bands_path = glob.glob(os.path.join(curr_acquisition, '*scf.vrt'))
+    
+    if bands_path == []:
+        bands_path = [f for f in glob.glob(curr_acquisition + os.sep + "PRS*.tif") if 'PCA' not in f][0]
+    else:
+        bands_path = bands_path[0]
+        
+    valid_mask = np.logical_not(no_data_mask)
+    
+    # Load masks and other necessary data
+    cloud_mask = open_image(path_cloud_mask)[0]
+    water_mask = open_image(path_water_mask)[0]
+    solar_incidence_angle = open_image(solar_incidence_angle_path)[0]
+    curr_scene_valid = np.logical_not(np.logical_or.reduce((cloud_mask == 2, water_mask == 1, no_data_mask)))
+    
+    ranges = ((0,20), (20, 45), (45, 70), (70, 90), (90, 180))
+    range_samples = calculate_training_samples(solar_incidence_angle, ranges, total_samples)
+    #ranges = ((70, 90))
+    
+    #ranges = ((0,20), (20, 30), (30, 40), (40, 50), (50, 60), (60, 70), (70, 80), (80, 90), (90, 180))
+    empty = np.zeros(curr_scene_valid.shape, dtype='uint8')
+    
+    percentage_per_angles_list = []
+    for curr_range, sample_count in range_samples.items():
+        print(curr_range)
+        print(sample_count)
+        
+        # Initialize as empty arrays
+        representative_pixels_mask_snow = np.array([])
+        representative_pixels_mask_noSnow = np.array([])
+    
+        curr_angle_valid = np.logical_and(curr_scene_valid, np.logical_and(solar_incidence_angle >= curr_range[0], solar_incidence_angle < curr_range[1]))
+        
+        percentage_of_scene_valid =  np.sum(curr_angle_valid) / np.sum(curr_scene_valid)
+        
+        percentage_per_angles_list.append(percentage_of_scene_valid)
+    
+        curr_NDSI = read_masked_values(NDSI_path, curr_angle_valid)
+        curr_NDVI = read_masked_values(NDVI_path, curr_angle_valid)
+        curr_green = read_masked_values(bands_path, curr_angle_valid, bands=[2])
+        curr_bands = read_masked_values(bands_path, curr_angle_valid)
+        curr_diff_B_NIR = read_masked_values(diff_B_NIR_path, curr_angle_valid)
+        curr_shad_idx = read_masked_values(shad_idx_path, curr_angle_valid)
+        curr_shadow_mask = read_masked_values(shadow_mask_path, curr_angle_valid)
+    
+        # SNOW TRAINING SHADOW
+        
+        # Normalize indices and compute shadow metric
+        diff_B_NIR_low_perc, diff_B_NIR_high_perc = np.percentile(curr_diff_B_NIR, [2, 95])
+        shad_idx_low_perc, shad_idx_high_perc = np.percentile(curr_shad_idx, [2, 95])
+        curr_diff_B_NIR_norm = np.clip((curr_diff_B_NIR - diff_B_NIR_low_perc) / (diff_B_NIR_high_perc - diff_B_NIR_low_perc), 0, 1)
+        curr_shad_idx_norm = np.clip((curr_shad_idx - shad_idx_low_perc) / (shad_idx_high_perc - shad_idx_low_perc), 0, 1)
+        curr_score_snow_shadow = curr_diff_B_NIR_norm - curr_shad_idx_norm
+        threshold_shadow = np.percentile(curr_score_snow_shadow, 95)
+        curr_valid_snow_mask_shadow = np.logical_and.reduce((curr_score_snow_shadow >= threshold_shadow, curr_NDSI > 0.7, curr_shadow_mask == 1, curr_diff_B_NIR > 0.1)).flatten()
+        if np.sum(curr_valid_snow_mask_shadow) > 10:
+            representative_pixels_mask_snow = get_representative_pixels(curr_bands, curr_valid_snow_mask_shadow, sample_count = int(sample_count/3), k=5, n_closest='auto')
+        
+        # SNOW TRAINING SUN
+        
+        # Normalize indices and compute sun metric
+        NDSI_low_perc, NDSI_high_perc = np.percentile(curr_NDSI[np.logical_not(np.isnan(curr_NDSI))], [1, 99])
+        NDVI_low_perc, NDVI_high_perc = np.percentile(curr_NDVI[np.logical_not(np.isnan(curr_NDVI))], [1, 99])
+        green_low_perc, green_high_perc = np.percentile(curr_green, [1, 99])
+        curr_NDSI_norm = np.clip((curr_NDSI - NDSI_low_perc) / (NDSI_high_perc - NDVI_low_perc), 0, 1)
+        curr_NDVI_norm = np.clip((curr_NDVI - NDVI_low_perc) / (NDVI_high_perc - NDVI_low_perc), 0, 1)
+        curr_green_norm = np.clip((curr_green - green_low_perc) / (green_high_perc - green_low_perc), 0, 1)
+        curr_score_snow_sun = curr_NDSI_norm - curr_NDVI_norm + curr_green_norm
+        threshold = np.percentile(curr_score_snow_sun, 95)
+        curr_valid_snow_mask = np.logical_and.reduce((curr_score_snow_sun >= threshold, curr_NDSI > 0.7, curr_shadow_mask == 0)).flatten()
+        
+        if np.sum(curr_valid_snow_mask) > 10:
+            representative_pixels_mask_snow = get_representative_pixels(curr_bands, curr_valid_snow_mask, sample_count = int(sample_count/4), k=5, n_closest='auto')
+        
+        
+       
+            
+        ## NO snow TRAINING SHADOW
+        
+        threshold_shadow_no_snow = np.percentile(curr_score_snow_shadow, 5)
+        curr_valid_no_snow_mask_shadow = np.logical_and.reduce((curr_score_snow_shadow <= threshold_shadow_no_snow, curr_diff_B_NIR < 0.08, curr_shadow_mask == 1)).flatten()
+        
+        if np.sum(curr_valid_no_snow_mask_shadow) > 10:
+            representative_pixels_mask_noSnow = get_representative_pixels(curr_bands, curr_valid_no_snow_mask_shadow, sample_count = int(sample_count/4), k=5, n_closest='auto') * 2
+    
+       ## NO snow TRAINING SUN
+        curr_valid_no_snow_mask = (curr_NDSI < 0).flatten()
+        
+        if np.sum(curr_valid_no_snow_mask) > 10:
+            representative_pixels_mask_noSnow = get_representative_pixels(curr_bands, curr_valid_no_snow_mask, sample_count = int(sample_count/4), k=10, n_closest='auto') * 2
+
+        # Check if masks have been assigned; if not, set as zeros
+        if representative_pixels_mask_snow.size == 0:
+            representative_pixels_mask_snow = np.zeros(curr_angle_valid.sum(), dtype='uint8')
+        if representative_pixels_mask_noSnow.size == 0:
+            representative_pixels_mask_noSnow = np.zeros(curr_angle_valid.sum(), dtype='uint8')
+            
+        representative_pixels_mask = representative_pixels_mask_noSnow + representative_pixels_mask_snow
+        empty[curr_angle_valid] = representative_pixels_mask
+        
+        print(str(np.sum(representative_pixels_mask_snow.flatten())) + ' SNOW PIXELS')
+        print(str(np.sum(representative_pixels_mask_noSnow.flatten() / 2)) + ' NO SNOW PIXELS')
+
+    
+    # Convert points where result == 1 or 2 to a shapefile
+    points = []
+    values = []
+    with rasterio.open(NDSI_path) as src:
+        for row, col in zip(*np.where((empty == 1) | (empty == 2))):
+            x, y = src.xy(row, col)
+            points.append(Point(x, y))
+            values.append(empty[row, col])
+
+    gdf = gpd.GeoDataFrame({"value": values}, geometry=points, crs=src.crs)
+    svm_folder_path = os.path.join(curr_acquisition, SVM_folder_name)
+    
+    plot_valid_pixels_percentage(ranges, percentage_per_angles_list, svm_folder_path)
+    
+    shapefile_path = os.path.join(svm_folder_path, 'representative_pixels_for_training_samples.shp')
+    gdf.to_file(shapefile_path, driver="ESRI Shapefile")
+    
+    training_mask_path = os.path.join(svm_folder_path, 'representative_pixels_for_training_samples.tif')
+    
+    # Update the profile and save the representative mask
+    with rasterio.open(NDSI_path) as src:
+        profile = src.profile
+    profile.update(dtype='uint8', count=1, compress='lzw', nodata=0)
+    
+    with rasterio.open(training_mask_path, 'w', **profile) as dst:
+        dst.write(empty, 1)
+
+    return shapefile_path , training_mask_path      
+
+
 def collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, SVM_folder_name, no_data_mask, bands, PCA=False, total_samples = 500):
     
     scf_folder = os.path.join(curr_acquisition, SVM_folder_name)
@@ -369,6 +521,26 @@ def collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, 
 
     return shapefile_path , training_mask_path   
   
+def rbf_kernel(X, gamma):
+    """
+    Computes the RBF (Gaussian) kernel matrix for the dataset X.
+    
+    Parameters:
+    - X: np.ndarray, shape (n_samples, n_features)
+        The input data.
+    - gamma: float
+        The parameter for the RBF kernel, defined as 1 / (2 * sigma^2).
+        
+    Returns:
+    - K: np.ndarray, shape (n_samples, n_samples)
+        The RBF kernel matrix.
+    """
+    pairwise_sq_dists = cdist(X, X, 'sqeuclidean')
+    K = np.exp(-gamma * pairwise_sq_dists)
+    return K
+
+  
+
 def rbf_kernel(X, gamma):
     """
     Computes the RBF (Gaussian) kernel matrix for the dataset X.

@@ -5,6 +5,7 @@ Created on Mon Sep 16 14:59:20 2024
 
 @author: rbarella
 """
+
 import os
 import pandas as pd
 import glob
@@ -16,14 +17,16 @@ import time
 import matplotlib.pyplot as plt
 from training_collection import *
 from SCF_functions import *
+from xgboost_functions import *
 
 def main():
     # Step 1: Load input data
     # Define the path to the CSV file containing input parameters
-    #csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/Azufre.csv')
-    #csv_path = os.path.join('/mnt/CEPH_PROJECTS/PROSNOW/Cristian_Phd/SnowFLAKES/input_csv/Generic_area.csv')
-    csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/sierra_nevada.csv')
+    csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/maipo_landsat.csv')
+    #csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/maipo.csv')
+    #csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/sierra_nevada.csv')
     #csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/prisma_test.csv')
+    #csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/senales.csv')
     
     input_data = pd.read_csv(csv_path)
 
@@ -104,8 +107,12 @@ def main():
     
     # Step 8: Generate glacier mask
     print("Generating glacier mask...")
-    #target_glacier_raster_mask_path = glacier_mask_automatic(water_mask_path)
-    #print(f"Glacier mask saved at {target_glacier_raster_mask_path}")
+    classify_glaciers = get_input_param(input_data, 'classify_glaciers')
+    external_glacier_mask_path = get_input_param(input_data, 'external_glacier_mask_path')
+    glaciers_model_svm = get_input_param(input_data, 'glaciers_model_name')
+    glacier_mask_path = glacier_mask_cutting(external_glacier_mask_path, water_mask_path)
+    
+    print(f"Glacier mask saved at {glacier_mask_path}")
     
     # Step 9: Download or crop DEM, and compute slope and aspect
     subimage_extents = process_image(img_info)
@@ -125,6 +132,8 @@ def main():
     scenes_not_to_cloud_mask = []
     
     SVM_folder_name = get_input_param(input_data, 'SVM_folder_name')
+    
+    XGB_folder_name = SVM_folder_name + '_XGB'
     
     # Process each acquisition
     for curr_acquisition in acquisitions_filtered:
@@ -225,19 +234,29 @@ def main():
         
         # shadow mask
         
-        generate_shadow_mask(curr_aux_folder, auxiliary_folder_path, no_data_mask, bands['NIR'])
+        shadow_mask_path = generate_shadow_mask(curr_aux_folder, auxiliary_folder_path, no_data_mask, bands['NIR'])
         
         
         # Step 10: Collect training data and train the SVM model
-        shapefile_path, training_mask_path = collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, SVM_folder_name, no_data_mask, bands)
+        shapefile_path, training_mask_path = collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, SVM_folder_name, no_data_mask, bands, shadow_mask_path)
+        
+        ## Preclassification with xgboost
+        
+        NDSI_path = glob.glob(os.path.join(curr_aux_folder, '*NDSI.tif'))[0]
+        with rasterio.open(NDSI_path) as ndsi_src:
+            ndsi_data = ndsi_src.read(1)  # Reading first band
         counter_to_exit = 0
         while True:
             
             print('TRAINING')
             svm_model_filename = model_training(curr_acquisition, shapefile_path, SVM_folder_name, gamma = None, perform_pca = perform_pca)
             
+            #xgb_model_filename = model_training_xgb(curr_acquisition, shapefile_path, XGB_folder_name, perform_pca=False, grid_search=True)
+            
             # Step 11: Run SCF prediction
             FSC_SVM_map_path = SCF_dist_SV(curr_acquisition, curr_aux_folder, auxiliary_folder_path, no_data_mask, svm_model_filename, Nprocesses=8, overwrite=True, perform_pca = perform_pca)
+            # FSC_XGB_map_path = snow_class_XGB(curr_acquisition, curr_aux_folder, auxiliary_folder_path, no_data_mask, xgb_model_filename, 
+            #                  Nprocesses=8, overwrite=true, perform_pca=False)
             
             # Step 12: Result check
             shapefile_path = check_scf_results(FSC_SVM_map_path, shapefile_path, curr_aux_folder, curr_acquisition, k=5, n_closest=5, perform_pca= perform_pca)
@@ -245,16 +264,25 @@ def main():
             # Load SCF and NDSI data to check the condition
             with rasterio.open(FSC_SVM_map_path) as scf_src:
                 scf_data = scf_src.read(1)  # Reading first band
+                
+            # Load SM and NDSI data to check the condition
+            # with rasterio.open(FSC_XGB_map_path) as sm_src:
+            #     sm_data = sm_src.read(1)  # Reading first band
             
-            NDSI_path = glob.glob(os.path.join(curr_aux_folder, '*NDSI.tif'))[0]
-            with rasterio.open(NDSI_path) as ndsi_src:
-                ndsi_data = ndsi_src.read(1)  # Reading first band
+            
          
             # Check condition
+            #if np.sum((scf_data > 0) & (scf_data <= 100) & (ndsi_data < 0) & (sm_data <= 100) & (sm_data > 0)) == 0 or counter_to_exit >= 10:
+                
             if np.sum((scf_data > 0) & (scf_data <= 100) & (ndsi_data < 0)) == 0 or counter_to_exit >= 10:
                 break  # Exit the loop if no points meet the condition
                 
             counter_to_exit += 1
+            
+        ## Glacier_classification
+        emisphere = get_hemisphere(FSC_SVM_map_path)
+        
+        glaciers_classifier(FSC_SVM_map_path, auxiliary_folder_path, glaciers_model_svm, curr_acquisition, Nprocesses=8)
 
         print("Process completed. Condition met, and no points found where SCF > 0 and NDSI < 0.")
             

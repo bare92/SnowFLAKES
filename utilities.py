@@ -14,6 +14,7 @@ import rasterio
 from sklearn.metrics.pairwise import rbf_kernel, pairwise_kernels, linear_kernel, cosine_similarity
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
+from rasterio.warp import transform_bounds
 
 
 def data_filter(start_date, end_date, working_folder, sensor):
@@ -168,6 +169,13 @@ def create_vrt_files(L_acquisitions_filt, sensor, resolution):
             create_vrt(elem, elem, 'scfT', resolution=resolution, overwrite=False)
             create_vrt(elem, elem, 'cloud', resolution=resolution, overwrite=False)
             
+        elif sensor == 'L7':
+            
+            create_vrt(elem, elem, 'scf', resolution=resolution, overwrite=False)
+            create_vrt(elem, elem, 'scfT', resolution=resolution, overwrite=False)
+            create_vrt(elem, elem, 'cloud', resolution=resolution, overwrite=False)
+            
+            
         else:
             create_vrt(elem, elem, 'scf', resolution=resolution, overwrite=False)
             
@@ -199,8 +207,12 @@ def select_band_names(sensor, suffix):
     """
     Returns the list of band names based on the sensor and suffix.
     """
-    if sensor in ['L4', 'L5', 'L7']:
-        return ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7']
+    if sensor in ['L4', 'L5', 'L7'] and suffix == 'scf':
+        return ['B1', 'B2', 'B3', 'B4', 'B5']
+    elif sensor == 'L7' and suffix == 'scfT':
+        return ['B1', 'B2', 'B3', 'B4', 'B5', 'B6_VCID_1', 'B7']
+    elif sensor == 'L7' and suffix == 'cloud':
+        return ['B1', 'B2', 'B3', 'B4', 'B5', 'B6_VCID_1', 'B7']
     elif sensor == 'L8' and suffix == 'scf':
         return ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8']
     elif sensor == 'L8' and suffix == 'scfT':
@@ -212,7 +224,9 @@ def select_band_names(sensor, suffix):
     elif sensor == 'S2' and suffix == 'scf':
         return ['B02', 'B03', 'B04', 'B05', 'B06', 'B07', 'B08', 'B8A', 'B11', 'B12']
     else:
-        raise ValueError(f"Unsupported sensor: {sensor}")
+        # Graceful fallback with logging instead of exception
+        print(f"Warning: Unsupported sensor or suffix combination: sensor={sensor}, suffix={suffix}")
+        return []
 
 def find_band_files(folder, band_name_list, sensor):
     """
@@ -238,7 +252,7 @@ def find_band_files(folder, band_name_list, sensor):
     return file_list
 
 def create_vrt_with_gdal(file_list, vrtname, resolution, band_name_list):
-    """
+    """no idea yet
     Creates a VRT file using GDAL.
     """
     file_string = " ".join(file_list)
@@ -675,5 +689,60 @@ def perform_pca_on_geotiff(input_tiff, valid_mask, variance_threshold=0.95, no_d
                 dst.write(pca_data_reshaped)
         
         print("PCA transformation complete. Output saved as:", output_tiff)
+
+def get_hemisphere(raster_path):
+    """
+    Determines whether a raster is in the Northern or Southern Hemisphere
+    for any reference coordinate system (CRS).
+
+    Parameters:
+        raster_path (str): Path to the raster file.
+
+    Returns:
+        str: 'Northern Hemisphere', 'Southern Hemisphere', or 'Equator' 
+             if the raster spans the equator.
+    """
+    try:
+        with rasterio.open(raster_path) as raster:
+            # Transform the bounds to WGS84 (EPSG:4326)
+            bounds_wgs84 = transform_bounds(
+                raster.crs,  # Source CRS
+                "EPSG:4326",  # Target CRS
+                raster.bounds.left,
+                raster.bounds.bottom,
+                raster.bounds.right,
+                raster.bounds.top
+            )
+
+            # Extract the geographic bounds in WGS84
+            _, bottom, _, top = bounds_wgs84
+
+            # Determine the hemisphere
+            if top > 0 and bottom > 0:
+                return "N"
+            elif top < 0 and bottom < 0:
+                return "S"
+            else:
+                return "E"
+    except Exception as e:
+        return f"Error processing the raster: {e}"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
