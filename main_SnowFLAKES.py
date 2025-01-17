@@ -22,7 +22,7 @@ from xgboost_functions import *
 def main():
     # Step 1: Load input data
     # Define the path to the CSV file containing input parameters
-    csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/maipo_landsat.csv')
+    csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/senales_cr.csv')
     #csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/maipo.csv')
     #csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/sierra_nevada.csv')
     #csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/prisma_test.csv')
@@ -32,6 +32,12 @@ def main():
 
     # Retrieve the working folder path from the input CSV file
     working_folder = get_input_param(input_data, 'working_folder')
+    
+    create_empty_files(working_folder)
+    
+    scenes_to_skip = scenes_skip(working_folder)
+    
+    scenes_to_skip_clouds = cloud_mask_to_skip(working_folder)
 
     # Step 2: Check satellite mission based on acquisition name
     print("Checking satellite mission...")
@@ -49,7 +55,7 @@ def main():
     start_date = get_input_param(input_data, 'Start Date')
     end_date = get_input_param(input_data, 'End Date')
     print(f"Filtering acquisitions between {start_date} and {end_date}...")
-    acquisitions_filtered = data_filter(start_date, end_date, working_folder, sensor)
+    acquisitions_filtered = data_filter(start_date, end_date, working_folder, sensor, scenes_to_skip)
     
     if not acquisitions_filtered:
         raise ValueError("No acquisitions found for the selected date range and sensor.")
@@ -111,6 +117,13 @@ def main():
     external_glacier_mask_path = get_input_param(input_data, 'external_glacier_mask_path')
     glaciers_model_svm = get_input_param(input_data, 'glaciers_model_name')
     glacier_mask_path = glacier_mask_cutting(external_glacier_mask_path, water_mask_path)
+    start_glaciers_month = get_input_param(input_data, 'start_glaciers_month')
+    end_glaciers_month = get_input_param(input_data, 'end_glaciers_month')
+    
+    dt_start_glaciers_month = datetime.datetime(1900, int(start_glaciers_month), 1)
+    dt_end_glaciers_month = datetime.datetime(1900, int(end_glaciers_month), 1)
+    
+    
     
     print(f"Glacier mask saved at {glacier_mask_path}")
     
@@ -163,7 +176,7 @@ def main():
         path_cloud_mask = os.path.join(curr_aux_folder, os.path.basename(curr_acquisition) + '_cloud_Mask.tif')
         
         # Generate cloud mask or use default if clouds are not computed
-        if not Compute_clouds:
+        if not Compute_clouds or date in scenes_to_skip_clouds:
             create_default_cloud_mask(vrt[0, :, :], path_cloud_mask)
             cloud_cover_percentage = 0
         else:
@@ -254,7 +267,7 @@ def main():
             #xgb_model_filename = model_training_xgb(curr_acquisition, shapefile_path, XGB_folder_name, perform_pca=False, grid_search=True)
             
             # Step 11: Run SCF prediction
-            FSC_SVM_map_path = SCF_dist_SV(curr_acquisition, curr_aux_folder, auxiliary_folder_path, no_data_mask, svm_model_filename, Nprocesses=8, overwrite=True, perform_pca = perform_pca)
+            FSC_SVM_map_path = SCF_dist_SV(curr_acquisition, curr_aux_folder, auxiliary_folder_path, no_data_mask, svm_model_filename, Nprocesses=1, overwrite=True, perform_pca = perform_pca)
             # FSC_XGB_map_path = snow_class_XGB(curr_acquisition, curr_aux_folder, auxiliary_folder_path, no_data_mask, xgb_model_filename, 
             #                  Nprocesses=8, overwrite=true, perform_pca=False)
             
@@ -282,7 +295,8 @@ def main():
         ## Glacier_classification
         emisphere = get_hemisphere(FSC_SVM_map_path)
         
-        glaciers_classifier(FSC_SVM_map_path, auxiliary_folder_path, glaciers_model_svm, curr_acquisition, Nprocesses=8)
+        if classify_glaciers == 'yes' and date_time.month >= dt_start_glaciers_month.month and date_time.month <= dt_end_glaciers_month.month:
+            glaciers_classifier(FSC_SVM_map_path, auxiliary_folder_path, glaciers_model_svm, curr_acquisition, Nprocesses=1)
 
         print("Process completed. Condition met, and no points found where SCF > 0 and NDSI < 0.")
             

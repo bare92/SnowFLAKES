@@ -16,10 +16,38 @@ from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 from rasterio.warp import transform_bounds
 
-
-def data_filter(start_date, end_date, working_folder, sensor):
+def create_empty_files(working_folder):
     """
-    Filters the scenes in the working folder by date and sensor.
+    Creates two empty text files in the specified folder if they don't already exist:
+    '00_scenes_to_skip.txt' and '00_skip_cloud_masks.txt'.
+    
+    Parameters
+    ----------
+    working_folder : str
+        The folder where the files will be created.
+    """
+    # Define file paths
+    scenes_to_skip_path = os.path.join(working_folder, '00_scenes_to_skip.txt')
+    skip_cloud_masks_path = os.path.join(working_folder, '00_skip_cloud_masks.txt')
+
+    # Create the empty text files only if they don't already exist
+    if not os.path.exists(scenes_to_skip_path):
+        with open(scenes_to_skip_path, 'w') as f:
+            pass  # Just create an empty file
+        print(f"Created file: {scenes_to_skip_path}")
+    else:
+        print(f"File already exists: {scenes_to_skip_path}")
+
+    if not os.path.exists(skip_cloud_masks_path):
+        with open(skip_cloud_masks_path, 'w') as f:
+            pass  # Just create an empty file
+        print(f"Created file: {skip_cloud_masks_path}")
+    else:
+        print(f"File already exists: {skip_cloud_masks_path}")
+
+def data_filter(start_date, end_date, working_folder, sensor, scenes_to_skip):
+    """
+    Filters the scenes in the working folder by date, sensor, and skips specified scenes.
 
     Parameters
     ----------
@@ -31,45 +59,91 @@ def data_filter(start_date, end_date, working_folder, sensor):
         The folder containing the acquisitions.
     sensor : str
         The sensor identifier (e.g., "S2", "L8").
+    scenes_to_skip : list
+        A list of dates (in "yyyymmdd" format) to exclude from the results.
 
     Returns
     -------
     list
-        A list of filtered scene directories between the provided dates.
+        A list of filtered scene directories between the provided dates, excluding scenes in `scenes_to_skip`.
     """
+    skipped_dates = []
+
     # Filter for Sentinel-2
     if sensor == 'S2':
         acquisitions = sorted(glob.glob(os.path.join(working_folder, 'S2*')))
-        acquisitions_filtered = [
-            f for f in acquisitions
-            if (
-                # MSIL1C format
-                (os.path.basename(f).split('_')[1] == 'MSIL1C' and 
-                 start_date <= os.path.basename(f).split('_')[2].split('T')[0] <= end_date) or
-                # OPER format
-                (os.path.basename(f).split('_')[1] == 'OPER' and 
-                 start_date <= os.path.basename(f).split('_')[7][1:].split('T')[0] <= end_date)
-            )
-        ]
-        
+        acquisitions_filtered = []
+        for f in acquisitions:
+            # Extract date for filtering
+            if os.path.basename(f).split('_')[1] == 'MSIL1C':
+                date = os.path.basename(f).split('_')[2].split('T')[0]
+            elif os.path.basename(f).split('_')[1] == 'OPER':
+                date = os.path.basename(f).split('_')[7][1:].split('T')[0]
+            else:
+                continue
+
+            # Check date conditions
+            if start_date <= date <= end_date:
+                if date not in scenes_to_skip:
+                    acquisitions_filtered.append(f)
+                else:
+                    skipped_dates.append(date)
+
     elif sensor == 'PRISMA':
-        
         acquisitions = sorted(glob.glob(os.path.join(working_folder, 'PRS*')))
-        acquisitions_filtered = [
-            f for f in acquisitions
-            if start_date <= os.path.basename(f).split('_')[4][:-6] <= end_date
-        ]
-    
+        acquisitions_filtered = []
+        for f in acquisitions:
+            date = os.path.basename(f).split('_')[4][:-6]
+            if start_date <= date <= end_date:
+                if date not in scenes_to_skip:
+                    acquisitions_filtered.append(f)
+                else:
+                    skipped_dates.append(date)
+
     # Filter for Landsat (L8, L7, etc.)
     else:
         acquisitions = sorted(glob.glob(os.path.join(working_folder, 'L*T1')))
-        acquisitions_filtered = [
-            f for f in acquisitions
-            if start_date <= os.path.basename(f).split('_')[3] <= end_date
-        ]
-    
-    print(f"Filtered acquisitions...\n")
+        acquisitions_filtered = []
+        for f in acquisitions:
+            date = os.path.basename(f).split('_')[3]
+            if start_date <= date <= end_date:
+                if date not in scenes_to_skip:
+                    acquisitions_filtered.append(f)
+                else:
+                    skipped_dates.append(date)
+
+    # Print skipped dates
+    if skipped_dates:
+        print(f"The following dates are being skipped: {', '.join(sorted(set(skipped_dates)))}")
+    else:
+        print("No dates were skipped.")
+
+    print(f"Filtered acquisitions...")
     return acquisitions_filtered
+
+def scenes_skip(working_folder):
+    
+    txt_scenes_to_skip_path = glob.glob(os.path.join(working_folder, '00_scenes_to_skip.txt'))[0]
+    with open(txt_scenes_to_skip_path, "r") as file:
+        content = file.read().strip()
+        if content:
+            date_list = content.split(',')
+        else:
+            date_list = []  # Empty file case
+            
+    return date_list
+            
+def cloud_mask_to_skip(working_folder):
+    
+    txt_scenes_to_skip_path = glob.glob(os.path.join(working_folder, '00_skip_cloud_masks.txt'))[0]
+    with open(txt_scenes_to_skip_path, "r") as file:
+        content = file.read().strip()
+        if content:
+            date_list = content.split(',')
+        else:
+            date_list = []  # Empty file case
+            
+    return date_list
 
 def get_input_param(input_data, name):
     """Retrieves the value associated with a given name from a DataFrame."""
