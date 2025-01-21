@@ -18,13 +18,15 @@ import matplotlib.pyplot as plt
 from training_collection import *
 from SCF_functions import *
 from xgboost_functions import *
+from shadow_mask_gen import *
+from scipy.ndimage import binary_dilation
 
 def main():
     # Step 1: Load input data
     # Define the path to the CSV file containing input parameters
-    csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/senales_cr.csv')
-    #csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/maipo.csv')
-    #csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/sierra_nevada.csv')
+    #csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/azufre.csv')
+    csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/maipo_L8.csv')
+    #csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/maipo_L7.csv')
     #csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/prisma_test.csv')
     #csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/senales.csv')
     
@@ -67,7 +69,7 @@ def main():
     # Step 5: Retrieve no data value
     no_data_value = get_input_param(input_data, 'no_data_value')
     
-    if no_data_value == None:
+    if no_data_value == None or 'nan' in no_data_value:
         no_data_value = np.nan
         
     else:
@@ -116,16 +118,16 @@ def main():
     classify_glaciers = get_input_param(input_data, 'classify_glaciers')
     external_glacier_mask_path = get_input_param(input_data, 'external_glacier_mask_path')
     glaciers_model_svm = get_input_param(input_data, 'glaciers_model_name')
-    glacier_mask_path = glacier_mask_cutting(external_glacier_mask_path, water_mask_path)
+    glaciers_mask_path = glacier_mask_cutting(external_glacier_mask_path, water_mask_path)
     start_glaciers_month = get_input_param(input_data, 'start_glaciers_month')
     end_glaciers_month = get_input_param(input_data, 'end_glaciers_month')
     
-    dt_start_glaciers_month = datetime.datetime(1900, int(start_glaciers_month), 1)
-    dt_end_glaciers_month = datetime.datetime(1900, int(end_glaciers_month), 1)
+    dt_start_glaciers_month = datetime(1900, int(start_glaciers_month), 1)
+    dt_end_glaciers_month = datetime(1900, int(end_glaciers_month), 1)
     
     
     
-    print(f"Glacier mask saved at {glacier_mask_path}")
+    print(f"Glacier mask saved at {glaciers_mask_path}")
     
     # Step 9: Download or crop DEM, and compute slope and aspect
     subimage_extents = process_image(img_info)
@@ -163,6 +165,26 @@ def main():
         # Extract date and time from the folder name and sensor type
         date_time, date = define_datetime(sensor, curr_acquisition)
         
+        # Handle no-data mask
+        
+        curr_band_stack_path = glob.glob(os.path.join(curr_acquisition, '*scf.vrt'))
+        clouds_band_stack_path = glob.glob(os.path.join(curr_acquisition, '*cloud.vrt'))
+        
+        if curr_band_stack_path == []:
+            curr_band_stack_path = [f for f in glob.glob(curr_acquisition + os.sep + "PRS*.tif") if 'PCA' not in f][0]
+        else:
+            curr_band_stack_path = curr_band_stack_path[0]
+            
+        if clouds_band_stack_path == []:
+            clouds_band_stack_path = [f for f in glob.glob(curr_acquisition + os.sep + "PRS*.tif") if 'PCA' not in f][0]
+        else:
+            clouds_band_stack_path = clouds_band_stack_path[0]
+            
+        
+        curr_image, curr_image_info = open_image(clouds_band_stack_path)
+        curr_image[curr_image == no_data_value] = np.nan
+        no_data_mask, valid_mask = generate_no_data_mask(curr_image, sensor, no_data_value=np.nan)
+        
         # Create auxiliary folder for this acquisition, for storing cloud mask, spectral indices, etc.
         curr_aux_folder = create_auxiliary_folder(curr_acquisition, folder_name='00_auxiliary_folder_' + date)
         
@@ -180,36 +202,24 @@ def main():
             create_default_cloud_mask(vrt[0, :, :], path_cloud_mask)
             cloud_cover_percentage = 0
         else:
-            if sensor == 'S2' and date in scenes_not_to_cloud_mask:
+            if date in scenes_not_to_cloud_mask:
                 create_default_cloud_mask(vrt[0, :, :], path_cloud_mask)
                 cloud_cover_percentage = 0
             elif sensor == 'S2':
+                cloud_prob = float(get_input_param(input_data, 'Cloud cover probability'))
+                average_over = int(get_input_param(input_data, 'average_over'))
+                dilation_size = int(get_input_param(input_data, 'dilation_cloud_cover'))
+                overwrite_cloud = int(get_input_param(input_data, 'Overwrite_cloud'))
                 stack_clouds_path = [os.path.join(curr_acquisition, f) for f in os.listdir(curr_acquisition) if 'cloud.vrt' in f][0]
                 cloud_mask_path, cloud_cover_percentage = S2_clouds_classifier(
                     stack_clouds_path, path_cloud_mask, ref_img_path, cloud_prob, overwrite_cloud=overwrite_cloud, 
                     average_over=average_over, dilation_size=dilation_size)
-            elif External_cloud_mask_folder:
-                try:
-                    path_cloud_mask = glob.glob((curr_acquisition + os.sep + "*cloudMask.tif"))[0]
-                except IndexError:
-                    path_cloud_mask = glob.glob((External_cloud_mask_folder + os.sep + "*" + os.path.basename(working_folder) + "*.tif"))[0]
-                cloud_mask = open_image(path_cloud_mask)[0]
-                cloud_cover_percentage = np.sum(cloud_mask == 2) / (np.shape(cloud_mask)[0] * np.shape(cloud_mask)[1])
-                del cloud_mask
+            elif sensor == 'L7' or sensor == 'L8':
+               
+                path_cloud_mask, cloud_cover_percentage = landsat_cloud_classifier(curr_aux_folder, path_cloud_mask, ref_img_path, sensor, valid_mask, Nprocesses=8, dilate_iterations=5)
             
-        # Handle no-data mask
-        
-        curr_band_stack_path = glob.glob(os.path.join(curr_acquisition, '*scf.vrt'))
-        
-        if curr_band_stack_path == []:
-            curr_band_stack_path = [f for f in glob.glob(curr_acquisition + os.sep + "PRS*.tif") if 'PCA' not in f][0]
-        else:
-            curr_band_stack_path = curr_band_stack_path[0]
-            
-        
-        curr_image, curr_image_info = open_image(curr_band_stack_path)
-        curr_image[curr_image == no_data_value] = np.nan
-        no_data_mask, valid_mask = generate_no_data_mask(curr_image, sensor, no_data_value=np.nan)
+
+
         no_data_percentage = np.sum(no_data_mask) / (curr_image_info['X_Y_raster_size'][0] * curr_image_info['X_Y_raster_size'][1])
         cloud_perc_corr = cloud_cover_percentage / (1 - no_data_percentage)
         
@@ -222,7 +232,7 @@ def main():
         # Compute spectral indices: NDVI, NDSI, band difference, and shadow index
         valid_mask = np.logical_not(no_data_mask)
         
-        if np.sum(no_data_mask) /len(valid_mask.flatten()) > 0.5 or cloud_perc_corr > 0.5:
+        if np.sum(no_data_mask) /len(valid_mask.flatten()) > 1 or cloud_perc_corr > 0.5:
             
             print('TOO MANY INVALID PIXELS...')
             
@@ -243,7 +253,7 @@ def main():
         spectral_idx_computer(bands['GREEN'], bands['RED'], 'idx6', curr_image, no_data_mask, curr_aux_folder, sensor, f"{sensor}_{date}_idx6.tif", curr_band_stack_path, B3=bands['NIR'])
         
         # Calculate solar incidence angle
-        solar_incidence_angle = solar_incidence_angle_calculator(curr_image_info, date_time, slopePath, aspectPath, curr_aux_folder, date)
+        solar_incidence_angle, sun_altitude, sun_azimuth = solar_incidence_angle_calculator(curr_image_info, date_time, slopePath, aspectPath, curr_aux_folder, date)
         
         # shadow mask
         
@@ -251,7 +261,22 @@ def main():
         
         
         # Step 10: Collect training data and train the SVM model
-        shapefile_path, training_mask_path = collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, SVM_folder_name, no_data_mask, bands, shadow_mask_path)
+        
+        if classify_glaciers == 'yes' and date_time.month >= dt_start_glaciers_month.month and date_time.month <= dt_end_glaciers_month.month: 
+            with rasterio.open(glaciers_mask_path) as src:
+                glaciers_mask = src.read(1)  # Read the cloud mask (first band)
+                
+                # Apply an N-pixel buffer using binary dilation
+            N = 3  # Replace this with the desired buffer size
+            structure = np.ones((2 * N + 1, 2 * N + 1))  # Define the dilation kernel
+            glaciers_mask = binary_dilation(glaciers_mask, structure=structure).astype(int)
+
+            training_collection_no_data_mask = np.logical_or(no_data_mask, glaciers_mask == 1)
+            
+        else:
+            training_collection_no_data_mask = no_data_mask
+        
+        shapefile_path, training_mask_path = collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, SVM_folder_name, training_collection_no_data_mask, bands, shadow_mask_path)
         
         ## Preclassification with xgboost
         
@@ -295,12 +320,12 @@ def main():
         ## Glacier_classification
         emisphere = get_hemisphere(FSC_SVM_map_path)
         
-        if classify_glaciers == 'yes' and date_time.month >= dt_start_glaciers_month.month and date_time.month <= dt_end_glaciers_month.month:
-            glaciers_classifier(FSC_SVM_map_path, auxiliary_folder_path, glaciers_model_svm, curr_acquisition, Nprocesses=1)
+        # if classify_glaciers == 'yes' and date_time.month >= dt_start_glaciers_month.month and date_time.month <= dt_end_glaciers_month.month:
+        #     glaciers_classifier(FSC_SVM_map_path, auxiliary_folder_path, glaciers_model_svm, curr_acquisition, Nprocesses=1)
 
         print("Process completed. Condition met, and no points found where SCF > 0 and NDSI < 0.")
             
-            
+        give_time(start) 
 
 if __name__ == "__main__":
     main()

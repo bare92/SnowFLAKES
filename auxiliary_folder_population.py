@@ -25,6 +25,7 @@ from pysolar.solar import *
 from rasterio.crs import CRS
 from pyproj import Transformer
 from pathlib import Path
+from shadow_mask_gen import *
 
 
 def create_auxiliary_folder(working_folder, folder_name = '01_TEST_auxiliary_folder'):
@@ -330,7 +331,6 @@ def glacier_mask_cutting(external_glacier_mask_path, water_mask_path):
 
     return glacier_mask_path
 
-
 def dem_downloader(sub_areas, ref_img_path, resolution, auxiliary_folder_path, buffer=0.02):
     """
     Downloads and mosaics a DEM (Digital Elevation Model) for a given set of sub-areas. If a DEM
@@ -436,6 +436,7 @@ def dem_downloader(sub_areas, ref_img_path, resolution, auxiliary_folder_path, b
         print("DEM already exists.")
     
     return final_dem
+
 def crop_predefined_DEM(ref_img_path, External_Dem_path, auxiliary_folder_path, reproj_type='bilinear', overwrite=False):
     """
     Crop a predefined DEM to match the spatial extent of a reference image and save it to the auxiliary folder.
@@ -618,6 +619,109 @@ def S2_clouds_classifier(stack_clouds_path, path_cloud_mask, ref_img_path, cloud
             (np.shape(cloud_mask)[0] * np.shape(cloud_mask)[1])
     
     return path_cloud_mask, cloud_cover_percentage;
+
+def landsat_cloud_classifier(curr_aux_folder, path_cloud_mask, ref_img_path, sensor, valid_mask, Nprocesses=8, dilate_iterations=5):
+    from xgboost import XGBClassifier
+    import pickle
+    import numpy as np
+    import rasterio
+    from rasterio.transform import from_bounds
+    from rasterio.features import shapes
+    from skimage.morphology import binary_erosion, binary_dilation, disk
+    from joblib import Parallel, delayed
+    import glob
+    import os
+
+    input_fileName = glob.glob(os.path.join(os.path.dirname(curr_aux_folder), '*cloud.vrt'))[0]
+    
+    # Select model based on sensor
+    # Get the directory of the current script
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    if sensor == 'L7':
+        
+        model_filepath = os.path.join(script_dir, 'Aux_files', 'Landsat-7_cloud_model_xgboost.p')
+    elif sensor == 'L8':
+        model_filepath = os.path.join(script_dir, 'Aux_files', 'Landsat-8_9_cloud_model_xgboost8.p')
+    
+    # Load the XGBoost model and associated data
+    with open(model_filepath, 'rb') as model_file:
+        svm_dict = pickle.load(model_file)
+    xgboost_model = svm_dict['xgboostModel']
+    normalizer = svm_dict['normalizer']
+    feature_names = svm_dict['feature_names']
+    
+    # Open the input raster
+    with rasterio.open(input_fileName) as src:
+        profile = src.profile
+        #profile.update(dtype='uint8', count=1)  # Update profile for the output
+        bands = np.array([src.read(i + 1).astype(np.float32) for i in range(src.count)])
+
+        # Extract features
+        band_indices = [src.indexes[src.descriptions.index(name)] for name in feature_names]
+        features = np.column_stack([bands[i - 1][valid_mask] for i in band_indices])
+
+    # Normalize features
+    features = np.nan_to_num(features)
+    features = normalizer.transform(features)
+
+    # Split features for parallel processing
+    feature_blocks = np.array_split(features, Nprocesses)
+
+    # Classify in parallel using XGBoost
+    def classify_block(block):
+        return xgboost_model.predict(block)
+
+    predictions_blocks = Parallel(n_jobs=Nprocesses, verbose=10)(
+        delayed(classify_block)(block) for block in feature_blocks
+    )
+    predictions = np.concatenate(predictions_blocks) + 1  # Adjust class indices
+
+    # Create the output raster
+    class_map = np.zeros((profile['height'], profile['width']), dtype='uint8')
+    class_map[valid_mask] = predictions
+
+    # Invert class_map values (1 ↔ 2)
+    class_map[class_map == 1] = 3  # Temporary placeholder
+    class_map[class_map == 2] = 1
+    class_map[class_map == 3] = 2
+
+    # Apply erosion and dilation
+     # Apply erosion
+    print("Applying morphological operations...")
+    struct_element = disk(2)  # Structuring element for erosion and dilation
+    eroded_map = binary_erosion(class_map == 2, footprint=struct_element).astype(np.uint8)
+    
+    # Apply dilation iteratively
+    dilated_map = eroded_map
+    for _ in range(dilate_iterations):
+        dilated_map = binary_dilation(dilated_map, footprint=struct_element).astype(np.uint8)
+    
+    # Update class_map with morphological operations
+    class_map[class_map > 0] = dilated_map[class_map > 0] * 2
+    class_map = np.nan_to_num(class_map, nan=0).astype(np.uint8)
+
+    
+    profile.update(
+        dtype='uint8',
+        count=1,  # Single band for classification output
+        driver='GTiff',  # Ensure output is a GeoTIFF
+        nodata=0
+        )
+    # Save the modified class_map as GeoTIFF
+    with rasterio.open(path_cloud_mask, 'w', **profile) as dst:
+        dst.write(class_map, 1)
+        dst.nodata = 0
+
+    print(f"Classified and processed raster saved to {path_cloud_mask}.")
+
+    clud_tot=open_image( path_cloud_mask)[0]
+    
+    cloud_cover_percentage = np.sum(clud_tot[ :, :] == 2) / \
+        (np.shape(clud_tot[ :, :])[0] * np.shape(clud_tot[ :, :])[1])
+    
+    
+    return path_cloud_mask, cloud_cover_percentage
+    
     
 def create_default_cloud_mask(shape, path_cloud_mask):
     
@@ -650,9 +754,11 @@ def generate_no_data_mask(L_image, sensor, no_data_value=np.nan):
 
     if np.isnan(no_data_value):
         if sensor == "L5":
-            no_data_mask = (np.isnan(L_image[5, :, :]) | np.isnan(L_image[0, :, :])).astype(bool)
+            no_data_mask = (np.isnan(L_image[5, :, :]) | np.isnan(L_image[0, :, :])).astype(bool)#
+            no_data_mask = np.any(np.isnan(L_image), axis=0)
         elif sensor == "L7":
-            no_data_mask = (np.isnan(L_image[0, :, :]) | np.isnan(L_image[np.max(np.shape(L_image)[0] - 1), :, :]) | np.isnan(L_image[6, :, :])).astype(bool)
+            #no_data_mask = (np.isnan(L_image[0, :, :]) | np.isnan(L_image[np.max(np.shape(L_image)[0] - 1), :, :]) | np.isnan(L_image[6, :, :])).astype(bool)
+            no_data_mask = np.any(np.isnan(L_image), axis=0)
         else:
             #no_data_mask = (np.isnan(L_image[0, :, :]) | np.isnan(L_image[np.max(np.shape(L_image)[0] - 1), :, :])).astype(bool)
             no_data_mask = np.any(np.isnan(L_image), axis=0)
@@ -663,10 +769,7 @@ def generate_no_data_mask(L_image, sensor, no_data_value=np.nan):
     valid_mask = np.logical_not(no_data_mask)
 
     return no_data_mask, valid_mask
-    
-
-
-    
+       
 def spectral_idx_computer(B1, B2, idx_name, curr_image, no_data_mask, curr_aux_folder, sensor, output_filename, ref_img_path, B3=None, B4=None):
     """
     Computes a spectral index and saves the result in the specified folder.
@@ -748,7 +851,6 @@ def spectral_idx_computer(B1, B2, idx_name, curr_image, no_data_mask, curr_aux_f
     print(f"Spectral index {idx_name} saved at {output_path}")
     return ;
 
-
 def solar_incidence_angle_calculator(curr_image_info, date_time, slopePath, aspectPath, curr_aux_folder, date):
     """
     Calculates the solar incidence angle based on slope, aspect, sun altitude, and azimuth.
@@ -823,7 +925,7 @@ def solar_incidence_angle_calculator(curr_image_info, date_time, slopePath, aspe
         dst.write(solar_incidence_angle.astype(np.float32), 1)
 
     print(f"Solar incidence angle saved at {output_path}")
-    return solar_incidence_angle      
+    return solar_incidence_angle,   sun_altitude, sun_azimuth
     
 def generate_shadow_mask(curr_aux_folder, auxiliary_folder_path, no_data_mask, NIR):
     """
@@ -907,5 +1009,31 @@ def generate_shadow_mask(curr_aux_folder, auxiliary_folder_path, no_data_mask, N
     
     return shadow_mask_path
     
-    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+   
     

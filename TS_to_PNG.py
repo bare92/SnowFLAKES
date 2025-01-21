@@ -248,16 +248,16 @@ def Plot_TS(time_series_folder, png_folder, start_date, end_date, scf_subfolder_
 
 
 ## MAIPO
-time_series_folder = '/mnt/CEPH_PROJECTS/PROSNOW/MRI_Andes/Sentinel2/Maipo/merged'
-png_folder = os.path.join('/mnt/CEPH_PROJECTS/PROSNOW/MRI_Andes/Sentinel2/Maipo', 'scf_Maipo_PNGs4')
-scf_subfolder_name = 'SnowFLAKES_4'
+# time_series_folder = '/mnt/CEPH_PROJECTS/PROSNOW/MRI_Andes/Sentinel2/Maipo/merged'
+# png_folder = os.path.join('/mnt/CEPH_PROJECTS/PROSNOW/MRI_Andes/Sentinel2/Maipo', 'scf_Maipo_PNGs4')
+# scf_subfolder_name = 'SnowFLAKES_4'
 ## SIERRA
 # time_series_folder = '/mnt/CEPH_PROJECTS/ALPSNOW/Katharina/scf_sierra'
 # png_folder = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Katharina/', 'scf_Sierra_PNGs2')
 ## Azufre
 time_series_folder = '/mnt/CEPH_PROJECTS/SNOWCOP/Glaciers/Azufre/calibrated'
-png_folder = os.path.join('/mnt/CEPH_PROJECTS/SNOWCOP/Glaciers/Azufre/', 'scf_Azufre_PNGs')
-scf_subfolder_name = 'SnowFLAKES_2'
+png_folder = os.path.join('/mnt/CEPH_PROJECTS/SNOWCOP/Glaciers/Azufre/', 'scf_Azufre_PNGs_20-01-2025')
+scf_subfolder_name = 'Riccardo_20-01-2025'
 
 
 

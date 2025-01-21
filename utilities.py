@@ -15,6 +15,7 @@ from sklearn.metrics.pairwise import rbf_kernel, pairwise_kernels, linear_kernel
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 from rasterio.warp import transform_bounds
+import time
 
 def create_empty_files(working_folder):
     """
@@ -801,7 +802,17 @@ def get_hemisphere(raster_path):
     except Exception as e:
         return f"Error processing the raster: {e}"
 
+def give_time(start):
+    """
+    Prints the elapsed time since the given start time in hours, minutes, and seconds.
 
+    Parameters:
+        start (float): The start time (e.g., from time.time()).
+    """
+    elapsed = time.time() - start
+    hours, rem = divmod(elapsed, 3600)
+    minutes, seconds = divmod(rem, 60)
+    print(f"Elapsed time: {int(hours):02d}h:{int(minutes):02d}m:{int(seconds):02d}s")
 
 
 
