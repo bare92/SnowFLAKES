@@ -1,9 +1,9 @@
 Name,Value,,
 GENERAL,,,
 working_folder,/mnt/CEPH_PROJECTS/PROSNOW/MRI_Andes/Landsat_Maipo/Landsat-9,,
-Start Date,20100404,20150925,20220113
-End Date,20260404,20240929,
-SVM_folder_name,Riccardo_20-01-2025,,
+Start Date,20120413,20150925,20220113
+End Date,20250413,20240929,
+SVM_folder_name,Riccardo_24-01-2025,,
 resolution,20,,
 no_data_value,0,,
 PCA,no,,

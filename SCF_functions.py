@@ -111,6 +111,7 @@ def SCF_dist_SV(curr_acquisition, curr_aux_folder, auxiliary_folder_path, no_dat
     path_water_mask = glob.glob(os.path.join(auxiliary_folder_path, '*Water_Mask.tif'))[0] 
     diff_B_NIR_path = glob.glob(os.path.join(curr_aux_folder, '*diffBNIR.tif'))[0]
     shadow_mask_path = glob.glob(os.path.join(curr_aux_folder, '*shadow_mask.tif'))[0]
+    distance_index_path = glob.glob(os.path.join(curr_aux_folder, '*distance.tif'))[0]
     
     
     if perform_pca:
@@ -144,6 +145,9 @@ def SCF_dist_SV(curr_acquisition, curr_aux_folder, auxiliary_folder_path, no_dat
     with rasterio.open(bands_path) as src:
        bands = src.read()  
        profile = src.profile
+       
+    with rasterio.open(distance_index_path) as dst_src:
+        dst_data = dst_src.read(1)  # Reading first band
         
     profile.update(dtype='uint8', count=1, compress='lzw', nodata=255, driver='GTiff')
     
@@ -198,6 +202,7 @@ def SCF_dist_SV(curr_acquisition, curr_aux_folder, auxiliary_folder_path, no_dat
     SCF_map[cloud_mask == 2] = 205
     SCF_map[water_mask == 1] = 210
     SCF_map[water_mask == 255] = 210
+    SCF_map[np.logical_and.reduce((SCF_map > 0, SCF_map <= 100, dst_data == 255))] = 0
     
     valid_mask[np.logical_not(valid_mask)] = 255
     
@@ -217,6 +222,7 @@ def glaciers_svm(svmModel, svmMatrix):
 def check_scf_results(FSC_SVM_map_path, shapefile_path, curr_aux_folder, curr_acquisition, k=5, n_closest=5, perform_pca = False):
     # Define paths for NDSI and bands data
     NDSI_path = glob.glob(os.path.join(curr_aux_folder, '*NDSI.tif'))[0]
+    distance_index_path = glob.glob(os.path.join(curr_aux_folder, '*distance.tif'))[0]
     
     if perform_pca:
         bands_path = glob.glob(os.path.join(curr_acquisition, '*PCA.tif'))[0]
@@ -235,6 +241,8 @@ def check_scf_results(FSC_SVM_map_path, shapefile_path, curr_aux_folder, curr_ac
     
     with rasterio.open(NDSI_path) as ndsi_src:
         ndsi_data = ndsi_src.read(1)  # Reading first band
+        
+
 
     # Identify points where SCF > 0 and NDSI < 0
     valid_mask = (scf_data > 0) & (scf_data <= 100) & (ndsi_data < 0)

@@ -20,6 +20,9 @@ import geopandas as gpd
 from shapely.geometry import Point
 from scipy.spatial.distance import cdist
 from sklearn.metrics import silhouette_score
+from scipy.ndimage import distance_transform_edt
+from skimage import exposure
+from rasterio.transform import from_origin
 
 def read_masked_values(geotiff_path, mask, bands=None):
     """
@@ -393,6 +396,7 @@ def collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, 
     NDVI_path = glob.glob(os.path.join(curr_aux_folder, '*NDVI.tif'))[0]
     diff_B_NIR_path = glob.glob(os.path.join(curr_aux_folder, '*diffBNIR.tif'))[0]
     shad_idx_path = glob.glob(os.path.join(curr_aux_folder, '*shad_idx.tif'))[0]
+    distance_index_path = glob.glob(os.path.join(curr_aux_folder, '*distance.tif'))[0]
         
     
     bands_path = glob.glob(os.path.join(curr_acquisition, '*scf.vrt'))
@@ -438,6 +442,7 @@ def collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, 
         curr_bands = read_masked_values(bands_path, curr_angle_valid)
         curr_diff_B_NIR = read_masked_values(diff_B_NIR_path, curr_angle_valid)
         curr_shad_idx = read_masked_values(shad_idx_path, curr_angle_valid)
+        curr_distance_idx = read_masked_values(distance_index_path, curr_angle_valid)
     
         # SNOW TRAINING
         if curr_range[0] >= 90:
@@ -448,7 +453,7 @@ def collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, 
             curr_shad_idx_norm = np.clip((curr_shad_idx - shad_idx_low_perc) / (shad_idx_high_perc - shad_idx_low_perc), 0, 1)
             curr_score_snow_shadow = curr_diff_B_NIR_norm - curr_shad_idx_norm
             threshold_shadow = np.percentile(curr_score_snow_shadow, 95)
-            curr_valid_snow_mask_shadow = np.logical_and(curr_score_snow_shadow >= threshold_shadow, curr_NDSI > 0.7).flatten()
+            curr_valid_snow_mask_shadow = np.logical_and.reduce((curr_score_snow_shadow >= threshold_shadow, curr_NDSI > 0.7, curr_distance_idx != 255)).flatten()
             if np.sum(curr_valid_snow_mask_shadow) > 10:
                 representative_pixels_mask_snow = get_representative_pixels(curr_bands, curr_valid_snow_mask_shadow, sample_count = int(sample_count/2), k=5, n_closest='auto')
         else:
@@ -461,7 +466,7 @@ def collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, 
             curr_green_norm = np.clip((curr_green - green_low_perc) / (green_high_perc - green_low_perc), 0, 1)
             curr_score_snow_sun = curr_NDSI_norm - curr_NDVI_norm + curr_green_norm
             threshold = np.percentile(curr_score_snow_sun, 95)
-            curr_valid_snow_mask = np.logical_and(curr_score_snow_sun >= threshold, curr_NDSI > 0.7).flatten()
+            curr_valid_snow_mask = np.logical_and.reduce((curr_score_snow_sun >= threshold, curr_NDSI > 0.7, curr_distance_idx != 255)).flatten()
             
             if np.sum(curr_valid_snow_mask) > 10:
                 representative_pixels_mask_snow = get_representative_pixels(curr_bands, curr_valid_snow_mask, sample_count = int(sample_count/2), k=5, n_closest='auto')
@@ -539,25 +544,6 @@ def rbf_kernel(X, gamma):
     K = np.exp(-gamma * pairwise_sq_dists)
     return K
 
-  
-
-def rbf_kernel(X, gamma):
-    """
-    Computes the RBF (Gaussian) kernel matrix for the dataset X.
-    
-    Parameters:
-    - X: np.ndarray, shape (n_samples, n_features)
-        The input data.
-    - gamma: float
-        The parameter for the RBF kernel, defined as 1 / (2 * sigma^2).
-        
-    Returns:
-    - K: np.ndarray, shape (n_samples, n_samples)
-        The RBF kernel matrix.
-    """
-    pairwise_sq_dists = cdist(X, X, 'sqeuclidean')
-    K = np.exp(-gamma * pairwise_sq_dists)
-    return K
 
 def kernel_kmeans(X, n_clusters, gamma, max_iter=100):
     """
@@ -611,5 +597,21 @@ def kernel_kmeans(X, n_clusters, gamma, max_iter=100):
     centroids = np.array([X[labels == k].mean(axis=0) for k in range(n_clusters)])
     
     return labels, centroids
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+
 
 

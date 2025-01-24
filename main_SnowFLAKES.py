@@ -25,7 +25,7 @@ def main():
     # Step 1: Load input data
     # Define the path to the CSV file containing input parameters
     #csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/azufre.csv')
-    csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/maipo_L8.csv')
+    csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/maipo_L9.csv')
     #csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/maipo_L7.csv')
     #csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/prisma_test.csv')
     #csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/senales.csv')
@@ -168,20 +168,24 @@ def main():
         # Handle no-data mask
         
         curr_band_stack_path = glob.glob(os.path.join(curr_acquisition, '*scf.vrt'))
-        clouds_band_stack_path = glob.glob(os.path.join(curr_acquisition, '*cloud.vrt'))
+        all_band_stack_path = glob.glob(os.path.join(curr_acquisition, '*scfT.vrt'))
+        
+        if all_band_stack_path == []:
+            glob.glob(os.path.join(curr_acquisition, '*cloud.vrt'))
+        
         
         if curr_band_stack_path == []:
             curr_band_stack_path = [f for f in glob.glob(curr_acquisition + os.sep + "PRS*.tif") if 'PCA' not in f][0]
         else:
             curr_band_stack_path = curr_band_stack_path[0]
             
-        if clouds_band_stack_path == []:
-            clouds_band_stack_path = [f for f in glob.glob(curr_acquisition + os.sep + "PRS*.tif") if 'PCA' not in f][0]
+        if all_band_stack_path == []:
+            all_band_stack_path = [f for f in glob.glob(curr_acquisition + os.sep + "PRS*.tif") if 'PCA' not in f][0]
         else:
-            clouds_band_stack_path = clouds_band_stack_path[0]
+            all_band_stack_path = all_band_stack_path[0]
             
         
-        curr_image, curr_image_info = open_image(clouds_band_stack_path)
+        curr_image, curr_image_info = open_image(all_band_stack_path)
         curr_image[curr_image == no_data_value] = np.nan
         no_data_mask, valid_mask = generate_no_data_mask(curr_image, sensor, no_data_value=np.nan)
         
@@ -259,6 +263,8 @@ def main():
         
         shadow_mask_path = generate_shadow_mask(curr_aux_folder, auxiliary_folder_path, no_data_mask, bands['NIR'])
         
+        ## adiecency map
+        adiacency_indexes(curr_acquisition, curr_aux_folder, auxiliary_folder_path, no_data_mask, bands)
         
         # Step 10: Collect training data and train the SVM model
         

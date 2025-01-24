@@ -26,6 +26,10 @@ from rasterio.crs import CRS
 from pyproj import Transformer
 from pathlib import Path
 from shadow_mask_gen import *
+from scipy.ndimage import distance_transform_edt
+from skimage import exposure
+from rasterio.transform import from_origin
+
 
 
 def create_auxiliary_folder(working_folder, folder_name = '01_TEST_auxiliary_folder'):
@@ -1010,9 +1014,77 @@ def generate_shadow_mask(curr_aux_folder, auxiliary_folder_path, no_data_mask, N
     return shadow_mask_path
     
 
+def adiacency_indexes(curr_acquisition, curr_aux_folder, auxiliary_folder_path, no_data_mask, bands):
+    sensor = get_sensor(os.path.basename(curr_acquisition))
+    
+    path_cloud_mask = glob.glob(os.path.join(curr_aux_folder, '*cloud_Mask.tif'))[0]
+    path_water_mask = glob.glob(os.path.join(auxiliary_folder_path, '*Water_Mask.tif'))[0]
+    NDSI_path = glob.glob(os.path.join(curr_aux_folder, '*NDSI.tif'))[0]
+    dem_path = glob.glob(os.path.join(auxiliary_folder_path, '*DEM.tif'))[0]
+    
+    valid_mask = np.logical_not(no_data_mask)
+    
+    # Load masks and other necessary data
+    cloud_mask, curr_image_info = open_image(path_cloud_mask)
+    water_mask = open_image(path_water_mask)[0]
+    curr_scene_valid = np.logical_not(np.logical_or.reduce((cloud_mask == 2, water_mask == 1, no_data_mask)))
+    dem = open_image(dem_path)[0]
+    NDSI = open_image(NDSI_path)[0]
+    NIR = bands['NIR']
+    
+    # Create the snow map
+    snow_map = np.zeros_like(NDSI, dtype=np.uint8)
+    no_snow_sure = (NDSI < 0) & curr_scene_valid
+    snow_sure = (NDSI > 0.6) & (NIR > 0.5) & curr_scene_valid
+    snow_map[no_snow_sure] = 1
+    snow_map[snow_sure] = 2
 
+    # Calculate distance from snow_sure
+    distance_from_snow = np.full_like(snow_map, np.nan, dtype=np.float32)
+    snow_sure_pixels = (snow_map == 2)
+    distance_from_snow[curr_scene_valid] = distance_transform_edt(~snow_sure_pixels)[curr_scene_valid]
+    distance_from_snow = np.nan_to_num(distance_from_snow, nan=np.nanmax(distance_from_snow))
+    distance_from_snow_normalized = (distance_from_snow - np.nanmin(distance_from_snow)) / (
+        np.nanmax(distance_from_snow) - np.nanmin(distance_from_snow)
+    )
+    
+    # Set altitude threshold
+    valid_dem = dem[np.logical_and(curr_scene_valid, snow_map == 2)]
+    altitude_min_threshold = np.percentile(valid_dem, 1) - 500
+    altitude_mask = (dem >= altitude_min_threshold)
+    
+    # Combine distance and altitude into index_of_distance
+    index_of_distance = np.zeros_like(snow_map, dtype=np.float32)
+    index_of_distance[curr_scene_valid] = (
+        distance_from_snow_normalized[curr_scene_valid] * altitude_mask[curr_scene_valid]
+    )
+    
+   
+    # Convert to uint8 for saving
+    index_of_distance_uint8 = (index_of_distance * 254).astype(np.uint8)  # Scale if needed
+    
+    # Set no-data value for areas outside altitude_mask
+    no_data_value = 255  # Choose the no-data value, e.g., 0 or 255
+    index_of_distance_uint8[np.logical_or(~altitude_mask, ~curr_scene_valid)] = no_data_value
 
-
+    
+    # Save the result as a GeoTIFF
+    output_path = os.path.join(curr_aux_folder, "index_of_distance.tif")
+    transform = from_origin(curr_image_info['geotransform'][0], curr_image_info['geotransform'][3], 
+                            curr_image_info['geotransform'][1], -curr_image_info['geotransform'][5])
+    with rasterio.open(
+        output_path,
+        "w",
+        driver="GTiff",
+        height=index_of_distance_uint8.shape[0],
+        width=index_of_distance_uint8.shape[1],
+        count=1,
+        dtype=rasterio.uint8,
+        crs=curr_image_info['projection'],
+        transform=transform,
+        nodata=no_data_value,
+    ) as dst:
+        dst.write(index_of_distance_uint8, 1)
 
 
 

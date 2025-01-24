@@ -54,7 +54,7 @@ def save_scene_png(time_series_folder, png_folder, start_date, end_date, scf_sub
         """Extracts the acquisition date from the filename based on the sensor type."""
         if sensor == 'S2':
             return os.path.basename(filename).split('_')[2].split('T')[0]
-        elif sensor == 'L8':
+        elif sensor == 'L8' or sensor == 'L7' :
             return os.path.basename(filename).split('_')[3]
 
     def validate_cloud_coverage(map_data):
@@ -67,13 +67,21 @@ def save_scene_png(time_series_folder, png_folder, start_date, end_date, scf_sub
     colormap = create_colormap()
 
     # Find images of interest
-    images_all = sorted(glob.glob(os.path.join(time_series_folder, '*', scf_subfolder_name, '*SnowFLAKES_GL*.tif')))
-    images_filtered = [f for f in images_all if start_date <= os.path.basename(f).split('_')[2].split('T')[0] <= end_date]
+    
+    
+    images_all = sorted(glob.glob(os.path.join(time_series_folder, '*', scf_subfolder_name, '*SnowFLAKES.tif')))
+    sensor = check_Mission(images_all[0])
+    if sensor == 'S2':
+        images_filtered = [f for f in images_all if start_date <= os.path.basename(f).split('_')[2].split('T')[0] <= end_date]
+        
+    if sensor == 'L7' or sensor == 'L8':
+        images_filtered = [f for f in images_all if start_date <= os.path.basename(f).split('_')[3] <= end_date]
+        
 
     for curr_map in images_filtered:
         
         
-        sensor = check_Mission(curr_map)
+       
         date = extract_date(sensor, curr_map)
         
         save_path = os.path.join(png_folder, f"{date}_scene.png")
@@ -97,7 +105,7 @@ def save_scene_png(time_series_folder, png_folder, start_date, end_date, scf_sub
             continue
 
         vrt_data = open_image(corrispondent_vrt)[0]
-        rgb_bands = {"S2": [8, 7, 1], "L8": [5, 4, 2]}
+        rgb_bands = {"S2": [8, 7, 1], "L8": [5, 4, 2], "L7": [4, 3, 1]}
         RGB_stack = vrt_data[rgb_bands[sensor], :, :]
 
         # Create and save the figure
@@ -158,6 +166,7 @@ def open_image (image_path):
     image_array = np.array(image.ReadAsArray(0, 0, cols, rows))
 
     return image_array, information;
+
 def check_Mission(acquisition_name):
     
     basename = os.path.basename(acquisition_name)
@@ -168,6 +177,10 @@ def check_Mission(acquisition_name):
         sensor = 'L7'
     elif 'LC08' in acquisition_name:
         sensor = 'L8'
+        
+    elif 'LC09' in acquisition_name:
+        sensor = 'L8'
+        
     elif 'S2' in acquisition_name:
         sensor = 'S2'
     else:
@@ -255,9 +268,13 @@ def Plot_TS(time_series_folder, png_folder, start_date, end_date, scf_subfolder_
 # time_series_folder = '/mnt/CEPH_PROJECTS/ALPSNOW/Katharina/scf_sierra'
 # png_folder = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Katharina/', 'scf_Sierra_PNGs2')
 ## Azufre
-time_series_folder = '/mnt/CEPH_PROJECTS/SNOWCOP/Glaciers/Azufre/calibrated'
-png_folder = os.path.join('/mnt/CEPH_PROJECTS/SNOWCOP/Glaciers/Azufre/', 'scf_Azufre_PNGs_20-01-2025')
-scf_subfolder_name = 'Riccardo_20-01-2025'
+time_series_folder = '/mnt/CEPH_PROJECTS/PROSNOW/MRI_Andes/Landsat_Maipo/Landsat-7'
+png_folder = os.path.join('/mnt/CEPH_PROJECTS/PROSNOW/MRI_Andes/Landsat_Maipo', 'Landsat-7_scf_maipo_PNGs_22-01-2025')
+scf_subfolder_name = 'Riccardo_22-01-2025'
+
+time_series_folder = '/mnt/CEPH_PROJECTS/PROSNOW/MRI_Andes/Landsat_Maipo/Landsat-9'
+png_folder = os.path.join('/mnt/CEPH_PROJECTS/PROSNOW/MRI_Andes/Landsat_Maipo', 'Landsat-9_scf_maipo_PNGs_24-01-2025')
+scf_subfolder_name = 'Riccardo_24-01-2025'
 
 
 
