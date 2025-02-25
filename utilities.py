@@ -237,6 +237,7 @@ def create_vrt_files(L_acquisitions_filt, sensor, resolution):
         if sensor == 'S2':
             create_vrt(elem, elem, 'cloud', resolution=resolution, overwrite=False)
             create_vrt(elem, elem, 'scf', resolution=resolution, overwrite=False)
+            create_vrt(elem, elem, 'scfT', resolution=resolution, overwrite=False)
             
         elif sensor == 'L8' or sensor == 'L9': 
             
@@ -298,6 +299,8 @@ def select_band_names(sensor, suffix):
         return ['B01', 'B02', 'B04', 'B05', 'B08', 'B8A', 'B09', 'B10', 'B11', 'B12']
     elif sensor == 'S2' and suffix == 'scf':
         return ['B02', 'B03', 'B04', 'B05', 'B06', 'B07', 'B08', 'B8A', 'B11', 'B12']
+    elif sensor == 'S2' and suffix == 'scfT':
+        return ['B01', 'B02', 'B03', 'B04', 'B05', 'B06', 'B07', 'B08', 'B8A', 'B09', 'B10', 'B11', 'B12']
     else:
         # Graceful fallback with logging instead of exception
         print(f"Warning: Unsupported sensor or suffix combination: sensor={sensor}, suffix={suffix}")

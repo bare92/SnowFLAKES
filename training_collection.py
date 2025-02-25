@@ -23,6 +23,8 @@ from sklearn.metrics import silhouette_score
 from scipy.ndimage import distance_transform_edt
 from skimage import exposure
 from rasterio.transform import from_origin
+from skimage.filters import threshold_otsu
+
 
 def read_masked_values(geotiff_path, mask, bands=None):
     """
@@ -597,21 +599,417 @@ def kernel_kmeans(X, n_clusters, gamma, max_iter=100):
     centroids = np.array([X[labels == k].mean(axis=0) for k in range(n_clusters)])
     
     return labels, centroids
+
+
+
+
+
+def cop_k_means_vectorized(X, fixed_labels, k=3, max_iter=100, tol=1e-4):
+    """
+    A simplified, vectorized COP-k-means implementation.
+    Fixed points (fixed_labels != -1) are not reassigned.
+    Unconstrained points (fixed_labels == -1) are assigned via a vectorized distance computation.
+    
+    Parameters:
+      X: array of shape (n_samples, n_features)
+      fixed_labels: array of shape (n_samples,) with values:
+          0 for sure snow (class 1),
+         -1 for unconstrained,
+          2 for sure no snow (class 3)
+      k: number of clusters (should be 3)
+      max_iter: maximum iterations
+      
+    Returns:
+      assignments: cluster assignments (0, 1, or 2) for each sample
+      centroids: array of shape (k, n_features)
+    """
+    n_samples, n_features = X.shape
+    assignments = np.full(n_samples, -1, dtype=int)
+    
+    # Set fixed assignments:
+    assignments[fixed_labels == 0] = 0
+    assignments[fixed_labels == 2] = 2
+
+    # Initialize centroids using a seeded approach:
+    centroids = np.zeros((k, n_features))
+    idx0 = np.flatnonzero(fixed_labels == 0)
+    centroids[0] = X[idx0[0]] if len(idx0) > 0 else X[np.random.choice(n_samples)]
+    
+    idx2 = np.flatnonzero(fixed_labels == 2)
+    centroids[2] = X[idx2[0]] if len(idx2) > 0 else X[np.random.choice(n_samples)]
+    
+    idx_unconstrained = np.flatnonzero(fixed_labels == -1)
+    centroids[1] = X[np.random.choice(idx_unconstrained)] if len(idx_unconstrained) > 0 else X[np.random.choice(n_samples)]
+    
+    for iteration in range(max_iter):
+        prev_assignments = assignments.copy()
+        # Get indices of unconstrained points
+        unconstrained_idx = np.flatnonzero(fixed_labels == -1)
+        if unconstrained_idx.size > 0:
+            # Extract unconstrained points
+            U = X[unconstrained_idx]  # shape: (n_unconstrained, n_features)
+            # Compute squared Euclidean distances using vectorized dot-product formula:
+            # dist(i, j) = ||U[i] - centroids[j]||^2
+            #             = sum(U[i]**2) + sum(centroids[j]**2) - 2 * U[i] dot centroids[j]
+            U_sq = np.sum(U**2, axis=1)[:, np.newaxis]    # shape: (n_unconstrained, 1)
+            C_sq = np.sum(centroids**2, axis=1)[np.newaxis, :]  # shape: (1, k)
+            dists = U_sq + C_sq - 2 * np.dot(U, centroids.T)  # shape: (n_unconstrained, k)
+            
+            # Assign each unconstrained point to the closest centroid
+            assignments[unconstrained_idx] = np.argmin(dists, axis=1)
+        
+        # Update centroids for each cluster (k is small, so a loop is fine)
+        for c in range(k):
+            indices = np.flatnonzero(assignments == c)
+            if len(indices) > 0:
+                centroids[c] = np.mean(X[indices], axis=0)
+        
+        # Check for convergence
+        if np.array_equal(assignments, prev_assignments):
+            print(f"Converged at iteration {iteration}")
+            break
+    
+    return assignments, centroids
+
+
+def glacier_classifier(curr_acquisition, curr_aux_folder, auxiliary_folder_path, SVM_folder_name, no_data_mask, bands):
     
     
     
+    scf_folder = os.path.join(curr_acquisition, SVM_folder_name)
+    if not os.path.exists(scf_folder):
+        os.makedirs(scf_folder)
+        
+    sensor = get_sensor(os.path.basename(curr_acquisition))
+    
+    path_cloud_mask = glob.glob(os.path.join(curr_aux_folder, '*cloud_Mask.tif'))[0]
+    path_water_mask = glob.glob(os.path.join(auxiliary_folder_path, '*Water_Mask.tif'))[0]
+    solar_incidence_angle_path = glob.glob(os.path.join(curr_aux_folder, '*solar_incidence_angle.tif'))[0]
+    NDSI_path = glob.glob(os.path.join(curr_aux_folder, '*NDSI.tif'))[0]
+    NDVI_path = glob.glob(os.path.join(curr_aux_folder, '*NDVI.tif'))[0]
+    diff_B_NIR_path = glob.glob(os.path.join(curr_aux_folder, '*diffBNIR.tif'))[0]
+    shad_idx_path = glob.glob(os.path.join(curr_aux_folder, '*shad_idx.tif'))[0]
+    dem_path = glob.glob(os.path.join(auxiliary_folder_path, '*DEM.tif'))[0]
+    band_ratio_glaciers_path = glob.glob(os.path.join(curr_aux_folder, '*Glaciers.tif'))[0]
+    
+    glacier_mask_path = glob.glob(os.path.join(auxiliary_folder_path, '*glacier*.tif'))[0]
+        
+    
+    bands_path = glob.glob(os.path.join(curr_acquisition, '*scf.vrt'))
+    
+    if bands_path == []:
+        bands_path = [f for f in glob.glob(curr_acquisition + os.sep + "PRS*.tif") if 'PCA' not in f][0]
+    else:
+        bands_path = bands_path[0]
+        
+    valid_mask = np.logical_not(no_data_mask)
+    
+    # Load masks and other necessary data
+    cloud_mask = open_image(path_cloud_mask)[0]
+    water_mask = open_image(path_water_mask)[0]
+    glacier_mask = open_image(glacier_mask_path)[0]
+    solar_incidence_angle = open_image(solar_incidence_angle_path)[0]
+    glacier_index = open_image(band_ratio_glaciers_path)[0]
+    dem = open_image(dem_path)[0]
+    ndsi = open_image(NDSI_path)[0]
+     
+    curr_scene_valid_gl = np.logical_not(np.logical_or.reduce((cloud_mask == 2, water_mask == 1, no_data_mask, glacier_mask ==0)))
+    curr_scene_valid = np.logical_not(np.logical_or.reduce((cloud_mask == 2, water_mask == 1, no_data_mask)))
+    
+    green = define_bands(open_image(bands_path)[0], valid_mask, sensor)['GREEN']
     
     
     
+    ### COP K means
+    
+    bands = open_image(bands_path)[0]
+    
+    sure_snow = np.logical_and.reduce((curr_scene_valid, ndsi>0.7, green>0.5))
+    
+    sure_no_snow = np.logical_and(curr_scene_valid, ndsi<0.1)
+    
+ 
+    Nfeatures, Nrows, Ncols = bands.shape
+    
+    # Convert bands to a 2D data matrix where each row is a pixel's feature vector.
+    # Since bands is (Nfeatures, Nrows, Ncols), we transpose to (Nrows, Ncols, Nfeatures) and then reshape.
+    X = bands.transpose(1, 2, 0).reshape(-1, Nfeatures)
+    n_pixels = Nrows * Ncols
+    
+    # Build fixed_labels for the full image:
+    # - Pixels in sure_snow get label 0.
+    # - Pixels in sure_no_snow get label 2.
+    # - All others get -1.
+    fixed_labels = - np.ones(n_pixels, dtype=int)
+    fixed_labels[sure_snow.flatten()] = 0
+    fixed_labels[sure_no_snow.flatten()] = 2
+    
+    # Run the vectorized COP-k-means on the full dataset.
+    assignments, centroids = cop_k_means_vectorized(X, fixed_labels, k=3, max_iter=100)
+   
+    
+    # Optionally re-enforce fixed assignments
+    # assignments[sure_snow.flatten()] = 100
+    # assignments[sure_no_snow.flatten()] = 0
+    assignments[assignments == 0] = 100 
+    assignments[assignments == 1] = 215 
+    assignments[assignments == 2] = 0 
+    assignments[assignments == -1] = 255
+    
+    # Reshape the assignments to (Nrows, Ncols)
+    full_cluster_map = assignments.reshape(Nrows, Ncols)
+    #plt.imshow(full_cluster_map, cmap='viridis')
+    
+    
+    # Create a classified map over only the valid region (curr_scene_valid_gl)
+    valid_class_map = 255 * np.ones((Nrows, Ncols), dtype=int)
+    valid_class_map[curr_scene_valid_gl] = full_cluster_map[curr_scene_valid_gl]
+    
+   # valid_class_map[valid_class_map == -1] = 2
+    
+    
+    #Visualization of the valid region classification
+    # plt.figure(figsize=(8, 6))
+    # plt.imshow(valid_class_map, cmap='viridis')
+    # plt.title("COP-k-means Cluster Assignment (Valid Region)")
+    # plt.colorbar(label='Cluster Label')
+    # plt.show()
+    
+    return valid_class_map
+    
+    
+  
+# def thematic_map_classifier(curr_acquisition, curr_aux_folder, auxiliary_folder_path, no_data_mask, SVM_folder_name):
+#     """
+#     Generate a thematic map using precomputed indices and bands.
+#     The output thematic map uses:
+#       100 = snow
+#       215 = ice
+#         0 = snow free
+#       255 = invalid/no-data
+
+#     Parameters:
+#       curr_acquisition: str, directory containing the current acquisition
+#       curr_aux_folder: str, directory with auxiliary files (e.g., cloud mask, indices)
+#       auxiliary_folder_path: str, directory for additional auxiliary files (e.g., water mask)
+#       no_data_mask: numpy array, boolean mask where True indicates no-data pixels
+#       SVM_folder_name: str, name of the folder to store intermediate outputs if needed
+#     """
+    
+#     # Create folder to store outputs if it doesn't exist
+#     thematic_folder = os.path.join(curr_acquisition, SVM_folder_name)
+#     if not os.path.exists(thematic_folder):
+#         os.makedirs(thematic_folder)
+#     sensor = get_sensor(os.path.basename(curr_acquisition))
+#     # Define paths for auxiliary files
+#     path_cloud_mask = glob.glob(os.path.join(curr_aux_folder, '*cloud_Mask.tif'))[0]
+#     path_water_mask = glob.glob(os.path.join(auxiliary_folder_path, '*Water_Mask.tif'))[0]
+#     NDSI_path = glob.glob(os.path.join(curr_aux_folder, '*NDSI.tif'))[0]
+#     NDVI_path = glob.glob(os.path.join(curr_aux_folder, '*NDVI.tif'))[0]
+#     glacier_mask_path = glob.glob(os.path.join(auxiliary_folder_path, '*glacier*.tif'))[0]
+    
+#     # Find the main bands file. Look for a VRT first; if not found, fallback to a TIF.
+#     bands_path_list = glob.glob(os.path.join(curr_acquisition, '*scf.vrt'))
+#     if bands_path_list == []:
+#         bands_path = [f for f in glob.glob(os.path.join(curr_acquisition, "PRS*.tif")) if 'PCA' not in f][0]
+#     else:
+#         bands_path = bands_path_list[0]
+        
+#     # Load the image bands using your open_image function.
+#     # Assume the returned bands array has shape (Nfeatures, Nrows, Ncols)
+#     bands = define_bands(open_image(bands_path)[0], valid_mask, sensor)
+#     # For this example, assume the ordering is:
+#     # blue = bands[0], red = bands[1], nir = bands[2], swir = bands[3]
+#     blue = bands['BLUE']
+#     red  = bands['RED']
+#     nir  = bands['NIR']
+#     swir = bands['SWIR']
+    
+#     # Load indices
+#     ndsi  = open_image(NDSI_path)[0]
+#     ndvi  = open_image(NDVI_path)[0]
+    
+#     # Load external masks for clouds and water
+#     cloud_mask = open_image(path_cloud_mask)[0]
+#     water_mask = open_image(path_water_mask)[0]
+#     glacier_mask = open_image(glacier_mask_path)[0]
+    
+#     # Create a valid data mask from the no_data_mask (True means valid)
+#     valid_mask = np.logical_not(no_data_mask)
+    
+#     # Compute red/SWIR ratio (adding a small constant to avoid division by zero)
+#     red_swir = red / (swir + 1e-10)
+    
+#     # Set classification thresholds (you can fine-tune these values)
+#     ndsi_threshold = 0.4      # Only consider pixels with ndsi above this value
+#     red_swir_threshold = 0.9  # Differentiate snow (>= threshold) from ice (< threshold)
+    
+#     # Build a candidate mask: pixels with sufficient NDSI are considered for snow/ice classification.
+#     candidate_mask = ndsi > ndsi_threshold
+    
+    
+#     snow_mask = candidate_mask & (red_swir < red_swir_threshold)
+#     ice_mask  = candidate_mask & (red_swir >= red_swir_threshold)
+    
+#     # Initialize the thematic map with snow free (0)
+#     thematic_map = np.zeros_like(blue, dtype=np.uint8)
+#     thematic_map[snow_mask] = 100
+#     thematic_map[ice_mask]  = 215
+    
+#     # Optionally, mark pixels that are invalid (no-data, clouds, or water) as 255
+#     invalid_mask = np.logical_or.reduce((np.logical_not(valid_mask),
+#                                            cloud_mask == 2,
+#                                            water_mask == 1))
+#     thematic_map[cloud_mask == 2] = 205
+#     thematic_map[water_mask == 1] = 210
+#     thematic_map[np.logical_and(glacier_mask == 0, thematic_map == 215)] = 100
+#     # Define output path
+  
+#     output_path = os.path.join(curr_acquisition, SVM_folder_name, os.path.basename(curr_acquisition) + '_simple_class.tif')
+#     # Open the raster
+#     with rasterio.open(path_cloud_mask) as src:
+#         meta = src.meta.copy()
+    
+#     # Save the modified raster
+#     with rasterio.open(output_path, 'w', **meta) as dst:
+#         dst.write(thematic_map, 1)
     
     
     
-    
-    
-    
-    
-    
+#     return thematic_map
     
 
 
+
+def thematic_map_classifier(curr_acquisition, curr_aux_folder, auxiliary_folder_path, 
+                            no_data_mask, SVM_folder_name, classify_glaciers, 
+                            date_time, dt_start_glaciers_month, dt_end_glaciers_month):
+    """
+    Generate a thematic map using precomputed indices and bands.
+    The output thematic map uses:
+      100 = snow
+      215 = ice
+        0 = snow free
+      205 = clouds (optional)
+      210 = water (optional)
+      255 = invalid/no-data
+
+    Parameters:
+      curr_acquisition: str, directory containing the current acquisition
+      curr_aux_folder: str, directory with auxiliary files (e.g., cloud mask, indices)
+      auxiliary_folder_path: str, directory for additional auxiliary files (e.g., water mask, glacier mask)
+      no_data_mask: numpy array, boolean mask where True indicates no-data pixels
+      SVM_folder_name: str, name of the folder to store intermediate outputs if needed
+      classify_glaciers: str, if 'yes', then glacier classification will be applied
+      date_time: datetime, acquisition date and time
+      dt_start_glaciers_month: datetime, start month for glacier classification
+      dt_end_glaciers_month: datetime, end month for glacier classification
+    """
+    
+    # Create folder to store outputs if it doesn't exist
+    thematic_folder = os.path.join(curr_acquisition, SVM_folder_name)
+    if not os.path.exists(thematic_folder):
+        os.makedirs(thematic_folder)
+        
+    sensor = get_sensor(os.path.basename(curr_acquisition))
+    
+    # Define paths for auxiliary files
+    path_cloud_mask = glob.glob(os.path.join(curr_aux_folder, '*cloud_Mask.tif'))[0]
+    path_water_mask = glob.glob(os.path.join(auxiliary_folder_path, '*Water_Mask.tif'))[0]
+    NDSI_path = glob.glob(os.path.join(curr_aux_folder, '*NDSI.tif'))[0]
+    NDVI_path = glob.glob(os.path.join(curr_aux_folder, '*NDVI.tif'))[0]
+    glacier_mask_path = glob.glob(os.path.join(auxiliary_folder_path, '*glacier*.tif'))[0]
+    
+    # Find the main bands file. Look for a VRT first; if not found, fallback to a TIF.
+    bands_path_list = glob.glob(os.path.join(curr_acquisition, '*scf.vrt'))
+    if bands_path_list == []:
+        bands_path = [f for f in glob.glob(os.path.join(curr_acquisition, "PRS*.tif")) if 'PCA' not in f][0]
+    else:
+        bands_path = bands_path_list[0]
+        
+    # Create valid mask from no_data_mask (True means valid)
+    valid_mask = np.logical_not(no_data_mask)
+    
+    # Load the image bands using your open_image and define_bands functions.
+    bands = define_bands(open_image(bands_path)[0], valid_mask, sensor)
+    # Expected band ordering: blue, red, nir, swir
+    blue = bands['BLUE']
+    red  = bands['RED']
+    nir  = bands['NIR']
+    swir = bands['SWIR']
+    
+    # Load indices
+    ndsi = open_image(NDSI_path)[0]
+    ndvi = open_image(NDVI_path)[0]
+    
+    # Load external masks for clouds, water and glaciers
+    cloud_mask   = open_image(path_cloud_mask)[0]
+    water_mask   = open_image(path_water_mask)[0]
+    glacier_mask = open_image(glacier_mask_path)[0]
+    
+    # Compute red/SWIR ratio (avoid division by zero)
+    red_swir = red / (swir + 1e-10)
+    
+    # Set a fixed NDSI threshold (candidate pixels) and a NDVI threshold to avoid vegetation
+    ndsi_threshold = 0.4
+    ndvi_threshold = 0.5
+    
+    # Build candidate mask: valid pixels with sufficient NDSI and low NDVI.
+    candidate_mask = valid_mask & (ndsi > ndsi_threshold) & (ndvi < ndvi_threshold)
+    
+    # Compute dynamic red/SWIR threshold using Otsu's method on candidate pixels.
+    if np.any(candidate_mask):
+        red_swir_dynamic_threshold = threshold_otsu(red_swir[candidate_mask])
+    else:
+        red_swir_dynamic_threshold = 0.9  # fallback if candidate_mask is empty
+
+    # Swapped condition: Snow if red/SWIR ratio is lower than dynamic threshold, ice if higher.
+    snow_mask = candidate_mask
+    
+    # Glacier reclassification: only if classify_glaciers == 'yes' and date within glacier season.
+    if (classify_glaciers.lower() == 'yes' and 
+        (dt_start_glaciers_month.month <= date_time.month <= dt_end_glaciers_month.month)):
+        
+        
+        ice_mask  = np.logical_and.reduce((candidate_mask, red_swir <= red_swir_dynamic_threshold, glacier_mask == 1))
+        
+    else:
+        ice_mask = np.zeros_like(snow_mask).astype('bool')
+       
+        
+        
+    
+    
+    # Initialize the thematic map with snow free (0)
+    thematic_map = np.zeros_like(blue, dtype=np.uint8)
+    thematic_map[snow_mask] = 100
+    thematic_map[ice_mask]  = 215
+    
+    # Mark invalid pixels as 255 (no-data, clouds, or water)
+    
+    thematic_map[np.logical_not(valid_mask)] = 255
+    # Optionally mark cloud and water areas with distinct codes:
+    thematic_map[cloud_mask == 2] = 205
+    thematic_map[water_mask == 1] = 210
+    
+    if np.sum(np.logical_and(thematic_map == 100, glacier_mask == 0)) > np.sum(glacier_mask == 1):
+        
+        thematic_map[thematic_map == 215] = 100
+    
+   
+    
+    # Define output path
+    output_path = os.path.join(curr_acquisition, SVM_folder_name, 
+                               os.path.basename(curr_acquisition) + '_simple_class.tif')
+    
+    # Open one of the auxiliary rasters (e.g., cloud mask) to copy metadata
+    with rasterio.open(path_cloud_mask) as src:
+        meta = src.meta.copy()
+    meta.update(dtype=rasterio.uint8, count=1)
+    
+    # Save the modified raster
+    with rasterio.open(output_path, 'w', **meta) as dst:
+        dst.write(thematic_map, 1)
+    
+    return output_path
 

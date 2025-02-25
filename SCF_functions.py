@@ -348,11 +348,37 @@ def glaciers_classifier(FSC_SVM_map_path, auxiliary_folder_path, glaciers_model_
     return FSC_glaciers_SVM_map_path
 
 
-   
+def mask_raster_with_glacier(FSC_SVM_map_path, thematic_map_path, auxiliary_folder_path):
+    # Define output path
+    output_path = FSC_SVM_map_path.replace('.tif', '_GLACIERS.tif')
+    glaciers_mask_path = glob.glob(os.path.join(auxiliary_folder_path, '*glacier_mask.tif'))[0]
+    
+    # Open the raster
+    with rasterio.open(FSC_SVM_map_path) as src:
+        meta = src.meta.copy()
+        fsc_data = src.read(1)  # Read first band
+        
+    # Open the raster
+    with rasterio.open(thematic_map_path) as src:
+        thematic_map = src.read(1) 
+        
+    # Open the raster
+    with rasterio.open(glaciers_mask_path) as src:
+        glacier_map = src.read(1) 
+        
+    
 
+    # Apply mask: Set FSC values to NoData where glacier_mask is not 255
+    fsc_data[glacier_map == 1] = thematic_map[glacier_map == 1]
     
+    # Save the modified raster
+    with rasterio.open(output_path, 'w', **meta) as dst:
+        dst.write(fsc_data, 1)
     
-    
+    print(f"Modified raster saved at: {output_path}")
+    return output_path  
+
+   
     
     
     

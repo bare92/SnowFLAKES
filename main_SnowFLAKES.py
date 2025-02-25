@@ -24,11 +24,11 @@ from scipy.ndimage import binary_dilation
 def main():
     # Step 1: Load input data
     # Define the path to the CSV file containing input parameters
-    #csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/azufre.csv')
-    csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/maipo_L9.csv')
+    #csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/maipo_S2.csv')
+    #csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/maipo_L8.csv')
     #csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/maipo_L7.csv')
     #csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/prisma_test.csv')
-    #csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/senales.csv')
+    csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/azufre.csv')
     
     input_data = pd.read_csv(csv_path)
 
@@ -97,8 +97,7 @@ def main():
     else:
         perform_pca = False
             
-    
-    
+  
     # Step 7: Generate water mask
     print("Generating water mask...")
     
@@ -150,6 +149,13 @@ def main():
     
     XGB_folder_name = SVM_folder_name + '_XGB'
     
+    # Ensure the directory exists
+    skipped_scenes_file = os.path.join(working_folder, "skipped_scenes.log")
+    
+    # Create the file if it doesn't exist (optional)
+    if not os.path.exists(skipped_scenes_file):
+        open(skipped_scenes_file, "w").close()  # Creates an empty file
+
     # Process each acquisition
     for curr_acquisition in acquisitions_filtered:
         folder = curr_acquisition + os.sep + SVM_folder_name
@@ -185,9 +191,12 @@ def main():
             all_band_stack_path = all_band_stack_path[0]
             
         
-        curr_image, curr_image_info = open_image(all_band_stack_path)
+        curr_image, curr_image_info = open_image(curr_band_stack_path)
         curr_image[curr_image == no_data_value] = np.nan
-        no_data_mask, valid_mask = generate_no_data_mask(curr_image, sensor, no_data_value=np.nan)
+        
+        all_bands_image = open_image(all_band_stack_path)[0]
+        all_bands_image[all_bands_image == no_data_value] = np.nan
+        no_data_mask, valid_mask = generate_no_data_mask(all_bands_image, sensor, no_data_value=np.nan)
         
         # Create auxiliary folder for this acquisition, for storing cloud mask, spectral indices, etc.
         curr_aux_folder = create_auxiliary_folder(curr_acquisition, folder_name='00_auxiliary_folder_' + date)
@@ -256,6 +265,8 @@ def main():
         spectral_idx_computer(bands['GREEN'], bands['RED'], 'NDSIplus', curr_image, no_data_mask, curr_aux_folder, sensor, f"{sensor}_{date}_NDSIplus.tif", curr_band_stack_path, B3=bands['NIR'], B4=bands['SWIR'])
         spectral_idx_computer(bands['GREEN'], bands['RED'], 'idx6', curr_image, no_data_mask, curr_aux_folder, sensor, f"{sensor}_{date}_idx6.tif", curr_band_stack_path, B3=bands['NIR'])
         
+        spectral_idx_computer(bands['RED'], bands['SWIR'], 'bandRatioGlaciers', curr_image, no_data_mask, curr_aux_folder, sensor, f"{sensor}_{date}_bandRatioGlaciers.tif", curr_band_stack_path)
+        
         # Calculate solar incidence angle
         solar_incidence_angle, sun_altitude, sun_azimuth = solar_incidence_angle_calculator(curr_image_info, date_time, slopePath, aspectPath, curr_aux_folder, date)
         
@@ -284,12 +295,56 @@ def main():
         
         shapefile_path, training_mask_path = collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, SVM_folder_name, training_collection_no_data_mask, bands, shadow_mask_path)
         
+        # Controlla se il file shapefile esiste ed è valido
+        if not os.path.exists(shapefile_path) or os.path.getsize(shapefile_path) == 0:
+            print(f"Skipping scene {os.path.basename(curr_acquisition)} due to missing geometries.")
+        
+            # Save the scene in the log file
+            with open(skipped_scenes_file, "a") as f:
+                f.write(f"{os.path.basename(curr_acquisition)}\n")
+        
+            continue  # Skip to the next scene
+        
+        # Load the shapefile
+        gdf = gpd.read_file(shapefile_path)
+        #print(gdf.columns)
+        
+        # Check if the shapefile has both values (assuming they are in a column named 'class')
+        unique_values = set(gdf['value'].unique())
+        thematic_map_path = thematic_map_classifier(curr_acquisition, curr_aux_folder, auxiliary_folder_path, 
+                                    no_data_mask, SVM_folder_name, classify_glaciers, 
+                                    date_time, dt_start_glaciers_month, dt_end_glaciers_month)
+        if unique_values != {1, 2}:  
+            print(f"Skipping scene {os.path.basename(curr_acquisition)} due to missing value 1 or 2. Produced just default map")
+            scf_folder = os.path.join(curr_acquisition, SVM_folder_name)
+            output_path = os.path.join(scf_folder, os.path.basename(curr_acquisition) + '_SnowFLAKES_GLACIERS.tif')
+            
+            # Open the raster
+            with rasterio.open(path_cloud_mask) as src:
+                meta = src.meta.copy()
+                              
+            # Open the raster
+            with rasterio.open(thematic_map_path) as src:
+                thematic_map = src.read(1) 
+                
+ 
+            # Save the modified raster
+            with rasterio.open(output_path, 'w', **meta) as dst:
+                dst.write(thematic_map, 1)
+            
+            # Save the scene in the log file
+            with open(skipped_scenes_file, "a") as f:
+                f.write(f"{os.path.basename(curr_acquisition)} - missing class 1 or 2\n")
+                
+        
+            continue  # Skip to the next scene
         ## Preclassification with xgboost
         
         NDSI_path = glob.glob(os.path.join(curr_aux_folder, '*NDSI.tif'))[0]
         with rasterio.open(NDSI_path) as ndsi_src:
             ndsi_data = ndsi_src.read(1)  # Reading first band
         counter_to_exit = 0
+        
         while True:
             
             print('TRAINING')
@@ -326,8 +381,11 @@ def main():
         ## Glacier_classification
         emisphere = get_hemisphere(FSC_SVM_map_path)
         
-        # if classify_glaciers == 'yes' and date_time.month >= dt_start_glaciers_month.month and date_time.month <= dt_end_glaciers_month.month:
-        #     glaciers_classifier(FSC_SVM_map_path, auxiliary_folder_path, glaciers_model_svm, curr_acquisition, Nprocesses=1)
+        if classify_glaciers == 'yes' and date_time.month >= dt_start_glaciers_month.month and date_time.month <= dt_end_glaciers_month.month:
+            
+            mask_raster_with_glacier(FSC_SVM_map_path, thematic_map_path, auxiliary_folder_path)
+            
+            
 
         print("Process completed. Condition met, and no points found where SCF > 0 and NDSI < 0.")
             

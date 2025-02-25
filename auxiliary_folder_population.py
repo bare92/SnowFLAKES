@@ -817,7 +817,8 @@ def spectral_idx_computer(B1, B2, idx_name, curr_image, no_data_mask, curr_aux_f
         'band_diff': lambda B1, B2, B3, B4: B1-B2,
         'EVI': lambda B1, B2, B3, B4: 2.5*(B1-B2) / (B1+2.4*B2+1),
         'NDSIplus': lambda B1, B2, B3, B4: 2*(B1+B2-B3-B4) / (B1+B2+B3+B4),
-        'idx6': lambda B1, B2, B3, B4: 2*(2*B1-B2-B3) / (2*B1+B2+B3)
+        'idx6': lambda B1, B2, B3, B4: 2*(2*B1-B2-B3) / (2*B1+B2+B3),
+        'bandRatioGlaciers': lambda B1, B2, B3, B4: B1/B2
         
         
     }
@@ -1035,7 +1036,7 @@ def adiacency_indexes(curr_acquisition, curr_aux_folder, auxiliary_folder_path, 
     # Create the snow map
     snow_map = np.zeros_like(NDSI, dtype=np.uint8)
     no_snow_sure = (NDSI < 0) & curr_scene_valid
-    snow_sure = (NDSI > 0.6) & (NIR > 0.5) & curr_scene_valid
+    snow_sure = (NDSI > 0.6) & (NIR > 0.45) & curr_scene_valid
     snow_map[no_snow_sure] = 1
     snow_map[snow_sure] = 2
 
@@ -1050,7 +1051,16 @@ def adiacency_indexes(curr_acquisition, curr_aux_folder, auxiliary_folder_path, 
     
     # Set altitude threshold
     valid_dem = dem[np.logical_and(curr_scene_valid, snow_map == 2)]
-    altitude_min_threshold = np.percentile(valid_dem, 1) - 500
+    
+    if valid_dem.size > 0:
+        altitude_min_threshold = np.percentile(valid_dem, 1) - 200
+    else:
+        altitude_min_threshold = np.nan  # Oppure scegli un valore predefinito sensato
+    
+    altitude_mask = (dem >= altitude_min_threshold) if not np.isnan(altitude_min_threshold) else np.zeros_like(dem, dtype=bool)
+
+
+    
     altitude_mask = (dem >= altitude_min_threshold)
     
     # Combine distance and altitude into index_of_distance

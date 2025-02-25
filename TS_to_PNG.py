@@ -69,7 +69,8 @@ def save_scene_png(time_series_folder, png_folder, start_date, end_date, scf_sub
     # Find images of interest
     
     
-    images_all = sorted(glob.glob(os.path.join(time_series_folder, '*', scf_subfolder_name, '*SnowFLAKES.tif')))
+    #images_all = sorted(glob.glob(os.path.join(time_series_folder, '*', scf_subfolder_name, '*SnowFLAKES.tif')))
+    images_all = sorted(glob.glob(os.path.join(time_series_folder, '*', scf_subfolder_name, '*GLACIER*.tif')))
     sensor = check_Mission(images_all[0])
     if sensor == 'S2':
         images_filtered = [f for f in images_all if start_date <= os.path.basename(f).split('_')[2].split('T')[0] <= end_date]
@@ -268,15 +269,17 @@ def Plot_TS(time_series_folder, png_folder, start_date, end_date, scf_subfolder_
 # time_series_folder = '/mnt/CEPH_PROJECTS/ALPSNOW/Katharina/scf_sierra'
 # png_folder = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Katharina/', 'scf_Sierra_PNGs2')
 ## Azufre
-time_series_folder = '/mnt/CEPH_PROJECTS/PROSNOW/MRI_Andes/Landsat_Maipo/Landsat-7'
-png_folder = os.path.join('/mnt/CEPH_PROJECTS/PROSNOW/MRI_Andes/Landsat_Maipo', 'Landsat-7_scf_maipo_PNGs_22-01-2025')
-scf_subfolder_name = 'Riccardo_22-01-2025'
+# time_series_folder = '/mnt/CEPH_PROJECTS/PROSNOW/MRI_Andes/Landsat_Maipo/Landsat-7'
+# png_folder = os.path.join('/mnt/CEPH_PROJECTS/PROSNOW/MRI_Andes/Landsat_Maipo', 'Landsat-7_scf_maipo_PNGs_22-01-2025')
+# scf_subfolder_name = 'Riccardo_22-01-2025'
 
-time_series_folder = '/mnt/CEPH_PROJECTS/PROSNOW/MRI_Andes/Landsat_Maipo/Landsat-9'
-png_folder = os.path.join('/mnt/CEPH_PROJECTS/PROSNOW/MRI_Andes/Landsat_Maipo', 'Landsat-9_scf_maipo_PNGs_24-01-2025')
-scf_subfolder_name = 'Riccardo_24-01-2025'
+# time_series_folder = '/mnt/CEPH_PROJECTS/PROSNOW/MRI_Andes/Landsat_Maipo/Landsat-8'
+# png_folder = os.path.join('/mnt/CEPH_PROJECTS/PROSNOW/MRI_Andes/Landsat_Maipo', 'Landsat-8_scf_maipo_PNGs_04-02-2025')
+# scf_subfolder_name = 'Riccardo_04-02-2025'
 
-
+time_series_folder = '/mnt/CEPH_PROJECTS/SNOWCOP/Glaciers/Azufre/calibrated'
+png_folder = os.path.join('/mnt/CEPH_PROJECTS/SNOWCOP/Glaciers/Azufre', 'S-2_scf_Azufre_PNGs_13-02-2025_simple_classifier')
+scf_subfolder_name = 'Riccardo_13-02-2025'
 
 start_date = '20101223'
 end_date = '20251223'
