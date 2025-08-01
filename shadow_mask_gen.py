@@ -6,7 +6,6 @@ Created on Fri Jan 17 16:28:37 2025
 @author: rbarella
 """
 
-
 import numpy as np
 from numpy import sin, cos, tan, arcsin
 from pyproj import Transformer
@@ -17,8 +16,8 @@ from datetime import timezone
 import sys
 import rasterio
 
+
 def get_central_coords_(curr_image_info, date_time):
-    
     E_min, N_min, E_max, N_max = curr_image_info['extent']
     epsg_code = curr_image_info['EPSG']
 
@@ -30,9 +29,9 @@ def get_central_coords_(curr_image_info, date_time):
 
     # Convert date_time to UTC timezone
     datetime_object = date_time.replace(tzinfo=timezone.utc)
-    
+
     return Central_WGS84[1], Central_WGS84[0], datetime_object
-    
+
 
 def get_timezone_from_coordinates(latitude, longitude):
     """Determine the timezone based on latitude and longitude."""
@@ -42,11 +41,12 @@ def get_timezone_from_coordinates(latitude, longitude):
         raise ValueError("Could not determine timezone for the given coordinates.")
     return timezone_str
 
+
 def calculate_sun_vector_with_auto_timezone(date_time, curr_image_info):
     """Calculate sun vector with automatic timezone determination."""
-    
+
     latitude, longitude, datetime_object = get_central_coords_(curr_image_info, date_time)
-    
+
     timezone_str = get_timezone_from_coordinates(latitude, longitude)
     timezone = pytz.timezone(timezone_str)
     local_offset = timezone.utcoffset(date_time).total_seconds() / 3600.0
@@ -57,6 +57,7 @@ def calculate_sun_vector_with_auto_timezone(date_time, curr_image_info):
     # Compute the sun vector
     sun_vec = sun_vector(julian_date, latitude, longitude, local_offset)
     return sun_vec
+
 
 def to_juliandate(d):
     """Convert a datetime object to a julian date.
@@ -84,9 +85,9 @@ def sun_vector(julian_date, latitude, longitude, timezone):
     # TODO TdR 27/09/16: factor out common computation
     svx = - sin(omega_r) * cos(delta_r)
     svy = sin(lambda_r) * cos(omega_r) * cos(delta_r) \
-        - cos(lambda_r) * sin(delta_r)
+          - cos(lambda_r) * sin(delta_r)
     svz = cos(lambda_r) * cos(omega_r) * cos(delta_r) \
-        + sin(lambda_r) * sin(delta_r)
+          + sin(lambda_r) * sin(delta_r)
     return np.array([svx, svy, svz])
 
 
@@ -102,7 +103,7 @@ def sun_declination(julian_date):
     gmas = 357.52911 + jdc * (35999.05029 - 0.0001537 * jdc)
     gmas = np.deg2rad(gmas)
     seqcent = sin(gmas) * (1.914602 - jdc * (0.004817 + 0.000014 * jdc)) + \
-        sin(2 * gmas) * (0.019993 - 0.000101 * jdc) + sin(3 * gmas) * 0.000289
+              sin(2 * gmas) * (0.019993 - 0.000101 * jdc) + sin(3 * gmas) * 0.000289
 
     suntl = l0 + seqcent
     sal = suntl - 0.00569 - 0.00478 * sin(np.deg2rad(125.04 - 1934.136 * jdc))
@@ -129,10 +130,10 @@ def _equation_of_time(julian_date):
     y = (tan(np.deg2rad(oblcorr) / 2)) ** 2
     rl0 = np.deg2rad(l0)
     EqTime = y * sin(2 * rl0) \
-        - 2.0 * ecc * sin(gmas) \
-        + 4.0 * ecc * y * sin(gmas) * cos(2 * rl0)\
-        - 0.5 * y * y * sin(4 * rl0) \
-        - 1.25 * ecc * ecc * sin(2 * gmas)
+             - 2.0 * ecc * sin(gmas) \
+             + 4.0 * ecc * y * sin(gmas) * cos(2 * rl0) \
+             - 0.5 * y * y * sin(4 * rl0) \
+             - 1.25 * ecc * ecc * sin(2 * gmas)
     return np.rad2deg(EqTime) * 4
 
 
@@ -145,7 +146,7 @@ def _hour_angle(julian_date, longitude, timezone):
     standard_meridian = timezone * 15
     delta_longitude_time = (longitude - standard_meridian) * 24.0 / 360.0
     omega_r = np.pi * (
-        ((hour + delta_longitude_time + time_offset / 60) / 12.0) - 1.0)
+            ((hour + delta_longitude_time + time_offset / 60) / 12.0) - 1.0)
     return omega_r
 
 
@@ -205,6 +206,7 @@ def project_shadows_from_path(dem_path, sun_vector):
 
     return shadow_mask.T
 
+
 def _normalize_sun_vector(sun_vector):
     normal_sun_vector = np.zeros(3)
     normal_sun_vector[2] = np.sqrt(sun_vector[0] ** 2 + sun_vector[1] ** 2)
@@ -212,8 +214,10 @@ def _normalize_sun_vector(sun_vector):
     normal_sun_vector[1] = -sun_vector[1] * sun_vector[2] / normal_sun_vector[2]
     return normal_sun_vector
 
+
 def _invert_sun_vector(sun_vector):
     return -sun_vector / max(abs(sun_vector[:2]))
+
 
 def _cast_shadow(row, col, rows, cols, dl, in_shadow, inverse_sun_vector,
                  normal_sun_vector, z):
@@ -240,9 +244,6 @@ def _cast_shadow(row, col, rows, cols, dl, in_shadow, inverse_sun_vector,
         else:
             z_previous = z_projection
         n += 1
-
-
-
 
 
 def project_shadows_from_path(dem_path, sun_vector):
@@ -298,6 +299,7 @@ def project_shadows_from_path(dem_path, sun_vector):
 
     return shadow_mask.T
 
+
 def hillshade_from_path(dem_path, sun_vector):
     """Generate a hillshade map from the DEM and sun position.
 
@@ -320,6 +322,7 @@ def hillshade_from_path(dem_path, sun_vector):
 
     return hillshade_map
 
+
 def gradient(grid, length_x, length_y=None):
     """
     Calculate the numerical gradient of a matrix in X, Y and Z directions.
@@ -337,10 +340,10 @@ def gradient(grid, length_x, length_y=None):
     grad = np.empty((*grid.shape, 3))
     grad[:] = np.nan
     grad[:-1, :-1, 0] = 0.5 * length_y * (
-        grid[:-1, :-1] - grid[:-1, 1:] + grid[1:, :-1] - grid[1:, 1:]
+            grid[:-1, :-1] - grid[:-1, 1:] + grid[1:, :-1] - grid[1:, 1:]
     )
     grad[:-1, :-1, 1] = 0.5 * length_x * (
-        grid[:-1, :-1] + grid[:-1, 1:] - grid[1:, :-1] - grid[1:, 1:]
+            grid[:-1, :-1] + grid[:-1, 1:] - grid[1:, :-1] - grid[1:, 1:]
     )
     grad[:-1, :-1, 2] = length_x * length_y
 
@@ -357,6 +360,7 @@ def gradient(grid, length_x, length_y=None):
         grad[:, :, i] /= area
     return grad
 
+
 def hill_shade(grad, sun_vector):
     """
     Compute the intensity of illumination on a surface given the sun position.
@@ -367,14 +371,15 @@ def hill_shade(grad, sun_vector):
     check_gradient(grad)
 
     hsh = (
-        grad[:, :, 0] * sun_vector[0] +
-        grad[:, :, 1] * sun_vector[1] +
-        grad[:, :, 2] * sun_vector[2]
+            grad[:, :, 0] * sun_vector[0] +
+            grad[:, :, 1] * sun_vector[1] +
+            grad[:, :, 2] * sun_vector[2]
     )
     # Remove negative incidence angles - indicators for self-shading.
     hsh = (hsh + abs(hsh)) / 2.
 
     return hsh
+
 
 def _normalize_sun_vector(sun_vector):
     normal_sun_vector = np.zeros(3)
@@ -383,8 +388,10 @@ def _normalize_sun_vector(sun_vector):
     normal_sun_vector[1] = -sun_vector[1] * sun_vector[2] / normal_sun_vector[2]
     return normal_sun_vector
 
+
 def _invert_sun_vector(sun_vector):
     return -sun_vector / max(abs(sun_vector[:2]))
+
 
 def _cast_shadow(row, col, rows, cols, dl, in_shadow, inverse_sun_vector,
                  normal_sun_vector, z):
@@ -411,6 +418,7 @@ def _cast_shadow(row, col, rows, cols, dl, in_shadow, inverse_sun_vector,
         else:
             z_previous = z_projection
         n += 1
+
 
 def check_gradient(grad):
     assert len(grad.shape) == 3 and grad.shape[2] == 3, \

@@ -17,11 +17,12 @@ from sklearn.preprocessing import StandardScaler
 from rasterio.warp import transform_bounds
 import time
 
+
 def create_empty_files(working_folder):
     """
     Creates two empty text files in the specified folder if they don't already exist:
     '00_scenes_to_skip.txt' and '00_skip_cloud_masks.txt'.
-    
+
     Parameters
     ----------
     working_folder : str
@@ -45,6 +46,7 @@ def create_empty_files(working_folder):
         print(f"Created file: {skip_cloud_masks_path}")
     else:
         print(f"File already exists: {skip_cloud_masks_path}")
+
 
 def data_filter(start_date, end_date, working_folder, sensor, scenes_to_skip):
     """
@@ -122,8 +124,8 @@ def data_filter(start_date, end_date, working_folder, sensor, scenes_to_skip):
     print(f"Filtered acquisitions...")
     return acquisitions_filtered
 
+
 def scenes_skip(working_folder):
-    
     txt_scenes_to_skip_path = glob.glob(os.path.join(working_folder, '00_scenes_to_skip.txt'))[0]
     with open(txt_scenes_to_skip_path, "r") as file:
         content = file.read().strip()
@@ -131,11 +133,11 @@ def scenes_skip(working_folder):
             date_list = content.split(',')
         else:
             date_list = []  # Empty file case
-            
+
     return date_list
-            
+
+
 def cloud_mask_to_skip(working_folder):
-    
     txt_scenes_to_skip_path = glob.glob(os.path.join(working_folder, '00_skip_cloud_masks.txt'))[0]
     with open(txt_scenes_to_skip_path, "r") as file:
         content = file.read().strip()
@@ -143,29 +145,32 @@ def cloud_mask_to_skip(working_folder):
             date_list = content.split(',')
         else:
             date_list = []  # Empty file case
-            
+
     return date_list
+
 
 def get_input_param(input_data, name):
     """Retrieves the value associated with a given name from a DataFrame."""
     filtered_data = input_data[input_data['Name'] == name]
     value = input_data[input_data['Name'] == name]['Value'].values[0]
-    
+
     if len(filtered_data) > 1:
         raise ValueError(f"Multiple matching rows found for name: {name}")
-        
+
     if isinstance(value, str):
-        
+
         print(f'the parameter {name} is set to {value}')
-    
+
     elif np.isnan(value):
         return None
-    
+
     return filtered_data['Value'].iloc[0]
+
 
 def get_sensor(acquisition_name):
     """Determines the satellite mission based on the acquisition name."""
     acquisition_name = os.path.basename(acquisition_name)
+
     if 'LT04' in acquisition_name:
         return 'L4'
     elif 'LT05' in acquisition_name or acquisition_name[:3] == 'LT5':
@@ -213,21 +218,22 @@ def define_bands(curr_image, valid_mask, sensor):
         'S2': {'GREEN': 1, 'SWIR': 8, 'NIR': 7, 'RED': 2, 'BLUE': 0},
         'PRISMA': {'GREEN': 19, 'SWIR': 122, 'NIR': 46, 'RED': 36, 'BLUE': 9}
     }
-    
+
     # Check if the sensor is supported
     if sensor not in band_mapping:
         raise ValueError(f"Sensor '{sensor}' is not supported.")
-    
+
     # Get band indices for the current sensor
     indices = band_mapping[sensor]
-    
+
     # Extract bands using the indices
     bands = {name: curr_image[idx, :, :] for name, idx in indices.items()}
-    
+
     # Perform Min-Max scaling on valid pixels
     valid_bands = curr_image[:, valid_mask]
-    
+
     return bands
+
 
 def create_vrt_files(L_acquisitions_filt, sensor, resolution):
     """
@@ -238,30 +244,30 @@ def create_vrt_files(L_acquisitions_filt, sensor, resolution):
             create_vrt(elem, elem, 'cloud', resolution=resolution, overwrite=False)
             create_vrt(elem, elem, 'scf', resolution=resolution, overwrite=False)
             create_vrt(elem, elem, 'scfT', resolution=resolution, overwrite=False)
-            
-        elif sensor == 'L8' or sensor == 'L9': 
-            
+
+        elif sensor == 'L8' or sensor == 'L9':
+
             create_vrt(elem, elem, 'scf', resolution=resolution, overwrite=False)
             create_vrt(elem, elem, 'scfT', resolution=resolution, overwrite=False)
             create_vrt(elem, elem, 'cloud', resolution=resolution, overwrite=False)
-            
+
         elif sensor == 'L7':
-            
+
             create_vrt(elem, elem, 'scf', resolution=resolution, overwrite=False)
             create_vrt(elem, elem, 'scfT', resolution=resolution, overwrite=False)
             create_vrt(elem, elem, 'cloud', resolution=resolution, overwrite=False)
-            
-            
+
+
         else:
             create_vrt(elem, elem, 'scf', resolution=resolution, overwrite=False)
-            
+
 
 def create_vrt(folder, outfolder, suffix="scf", resolution=30, overwrite=False):
     """
     Creates a VRT using selected bands for the specified sensor.
     """
     vrtname = os.path.join(outfolder, os.path.basename(folder) + f'_{suffix}.vrt')
-    
+
     if os.path.exists(vrtname) and not overwrite:
         print(f"{vrtname} already exists.")
         return
@@ -269,7 +275,7 @@ def create_vrt(folder, outfolder, suffix="scf", resolution=30, overwrite=False):
     # Determine the sensor type and get the bands
     sensor = get_sensor(folder)
     band_name_list = select_band_names(sensor, suffix)
-    
+
     # Find the band files in the folder
     file_list = find_band_files(folder, band_name_list, sensor)
     if not file_list:
@@ -278,6 +284,7 @@ def create_vrt(folder, outfolder, suffix="scf", resolution=30, overwrite=False):
 
     # Create the VRT using GDAL
     create_vrt_with_gdal(file_list, vrtname, resolution, band_name_list)
+
 
 def select_band_names(sensor, suffix):
     """
@@ -306,6 +313,7 @@ def select_band_names(sensor, suffix):
         print(f"Warning: Unsupported sensor or suffix combination: sensor={sensor}, suffix={suffix}")
         return []
 
+
 def find_band_files(folder, band_name_list, sensor):
     """
     Finds the file paths for the selected bands in the folder.
@@ -329,6 +337,7 @@ def find_band_files(folder, band_name_list, sensor):
 
     return file_list
 
+
 def create_vrt_with_gdal(file_list, vrtname, resolution, band_name_list):
     """no idea yet
     Creates a VRT file using GDAL.
@@ -344,49 +353,50 @@ def create_vrt_with_gdal(file_list, vrtname, resolution, band_name_list):
         VRT_dataset.GetRasterBand(idx).SetDescription(band_name)
     VRT_dataset = None
 
-def open_image(image_path,ncdf_layer='fsc'):
+
+def open_image(image_path, ncdf_layer='fsc'):
     """Opens an image and reads its metadata.
-    
+
     Parameters
     ----------
     image_path : str
         path to an image
-    ncdf_layer: optional , string of the name of wich layer of ncdf to open      
+    ncdf_layer: optional , string of the name of wich layer of ncdf to open
     Returns
     -------
     image : osgeo.gdal.Dataset
         the opened image
     information : dict
-        dictionary containing image metadata    
+        dictionary containing image metadata
     """
-    
+
     ext = os.path.basename(image_path).split('.')[-1]
-    
+
     if ext == 'nc':
-        nc_data = netCDF4.Dataset(image_path,'r')
+        nc_data = netCDF4.Dataset(image_path, 'r')
         vars_nc = list(nc_data.variables)
-       # ncdf_layer="fsc_unc"
-        scf_name = list(filter(lambda x: x.startswith(ncdf_layer), vars_nc))[0]        
+        # ncdf_layer="fsc_unc"
+        scf_name = list(filter(lambda x: x.startswith(ncdf_layer), vars_nc))[0]
         dataset = gdal.Open("NETCDF:{0}:{1}".format(image_path, scf_name))
-        proj = dataset.GetProjection()        
+        proj = dataset.GetProjection()
         geotransform = dataset.GetGeoTransform()
         cols = dataset.RasterXSize
         rows = dataset.RasterYSize
         minx = geotransform[0]
         maxy = geotransform[3]
         maxx = minx + geotransform[1] * cols
-        miny = maxy + geotransform[5] * rows        
-        extent = [minx, miny, maxx, maxy]        
+        miny = maxy + geotransform[5] * rows
+        extent = [minx, miny, maxx, maxy]
         X_Y_raster_size = [cols, rows]
         information = {}
         information['geotransform'] = geotransform
         information['extent'] = extent
         information['geotransform'] = tuple(map(lambda x: round(x, 4) or x, information['geotransform']))
-        information['extent'] = tuple(map(lambda x: round(x, 4) or x, information['extent'])) 
+        information['extent'] = tuple(map(lambda x: round(x, 4) or x, information['extent']))
         information['X_Y_raster_size'] = X_Y_raster_size
         information['projection'] = proj
-        
-        image_output = np.array(dataset.ReadAsArray(0, 0,cols, rows))            
+
+        image_output = np.array(dataset.ReadAsArray(0, 0, cols, rows))
 
     else:
         image = gdal.Open(image_path)
@@ -405,21 +415,21 @@ def open_image(image_path,ncdf_layer='fsc'):
         information['extent'] = extent
         information['X_Y_raster_size'] = X_Y_raster_size
         information['projection'] = proj
-        projection= osr.SpatialReference(wkt=image.GetProjection())
+        projection = osr.SpatialReference(wkt=image.GetProjection())
         with rasterio.open(image_path, 'r+') as rds:
             epsg_code = str(rds.crs).split(':')[1]
         information['EPSG'] = epsg_code
-        #print(cols,rows )
-        image_output = np.array(image.ReadAsArray(0, 0,cols, rows))
-        
+        # print(cols,rows )
+        image_output = np.array(image.ReadAsArray(0, 0, cols, rows))
+
     if image is None:
         print('could not open ' + image_path)
         return
-        
-    return image_output, information
-         
-def save_image (image_to_save, path_to_save, driver_name, datatype, geotransform, proj, NoDataValue=None):
 
+    return image_output, information
+
+
+def save_image(image_to_save, path_to_save, driver_name, datatype, geotransform, proj, NoDataValue=None):
     '''
     adfGeoTransform[0] / * top left x * /
     adfGeoTransform[1] / * w - e pixel resolution * /
@@ -427,7 +437,7 @@ def save_image (image_to_save, path_to_save, driver_name, datatype, geotransform
     adfGeoTransform[3] / * top left y * /
     adfGeoTransform[4] / * rotation, 0 if image is "north up" * /
     adfGeoTransform[5] / * n - s pixel resolution * /
-    
+
 
     enum  	GDALDataType {
     GDT_Unknown = 0, GDT_Byte = 1, GDT_UInt16 = 2, GDT_Int16 = 3,
@@ -435,7 +445,7 @@ def save_image (image_to_save, path_to_save, driver_name, datatype, geotransform
     GDT_CInt16 = 8, GDT_CInt32 = 9, GDT_CFloat32 = 10, GDT_CFloat64 = 11,
     GDT_TypeCount = 12}
     '''
-  
+
     driver = gdal.GetDriverByName(driver_name)
 
     if len(np.shape(image_to_save)) == 2:
@@ -465,17 +475,18 @@ def save_image (image_to_save, path_to_save, driver_name, datatype, geotransform
     else:
         outDataset.GetRasterBand(1).WriteArray(image_to_save, 0, 0)
         if NoDataValue != None:
-                outDataset.GetRasterBand(1).SetNoDataValue(NoDataValue)
-        
+            outDataset.GetRasterBand(1).SetNoDataValue(NoDataValue)
+
     outDataset = None
 
     print('Image Saved')
 
     return;
 
+
 def reproj_point(x, y, srIn, srOut):
     '''
-    trasform a point from one crt to another 
+    trasform a point from one crt to another
 
     Parameters
     ----------
@@ -498,27 +509,28 @@ def reproj_point(x, y, srIn, srOut):
     '''
     point = ogr.Geometry(ogr.wkbPoint)
     point.AddPoint(x, y)
-    
-    coordTransform = osr.CoordinateTransformation(srIn,srOut)
-        
+
+    coordTransform = osr.CoordinateTransformation(srIn, srOut)
+
     point.Transform(coordTransform)
-    
+
     (x, y) = point.GetX(), point.GetY()
-    
-    return (x,y)
- 
+
+    return (x, y)
+
+
 def subimages_definer(dim_img, max_dim=9000):
     """
     Determines the optimal number of subdivisions (nrow, ncol) required to ensure
     that the image can be processed without exceeding memory limitations.
-    
+
     Parameters
     ----------
     dim_img : list of int
         Dimensions of the image as [x_pixels, y_pixels].
     max_dim : int, optional
         Maximum dimension that can be processed at once (default is 9000).
-    
+
     Returns
     -------
     x : int
@@ -535,11 +547,11 @@ def subimages_definer(dim_img, max_dim=9000):
         Number of extra pixels to handle for odd-sized columns.
     """
     x, y = dim_img  # Extract image dimensions (x and y)
-    
+
     # Initialize subdivision counts and deltas for odd dimensions
     nrow, ncol = 1, 1
     del_row, del_col = 0, 0
-    
+
     # Continue splitting the image until both dimensions fit within max_dim
     while x > max_dim or y > max_dim:
         if x > y:
@@ -558,14 +570,15 @@ def subimages_definer(dim_img, max_dim=9000):
             else:
                 y = np.floor(y / 2)
             ncol *= 2  # Double the number of columns
-    
+
     return int(x), int(y), nrow, ncol, del_row, del_col
+
 
 def extent_cutter(img_info, nrow, ncol, resolution, x, y):
     """
-    Calculates the extents of the image subdivisions based on the number of rows 
+    Calculates the extents of the image subdivisions based on the number of rows
     and columns, as well as the image resolution.
-    
+
     Parameters
     ----------
     img_info : dict
@@ -580,7 +593,7 @@ def extent_cutter(img_info, nrow, ncol, resolution, x, y):
         Number of pixels in each subdivision along the x-axis.
     y : int
         Number of pixels in each subdivision along the y-axis.
-    
+
     Returns
     -------
     extent_outputs : list of tuples
@@ -589,32 +602,33 @@ def extent_cutter(img_info, nrow, ncol, resolution, x, y):
     """
     extent_input = img_info['extent']
     minx, miny = extent_input[0], extent_input[1]
-    
+
     extent_outputs = []
-    
+
     # Iterate through each row and column to define extents for each subimage
     for i in range(nrow):
         x_min_i = minx + i * resolution * x
         x_max_i = minx + (i + 1) * resolution * x
-        
+
         for j in range(ncol):
             y_min_i = miny + j * resolution * y
             y_max_i = miny + (j + 1) * resolution * y
             extent_outputs.append((x_min_i, y_min_i, x_max_i, y_max_i))
-    
+
     return extent_outputs
+
 
 def process_image(img_info, max_dim=9000):
     """
     Integrates the subimage definition and extent calculation for processing large images.
-    
+
     Parameters
     ----------
     img_info : dict
         Dictionary containing image metadata, including dimensions and extent.
     max_dim : int, optional
         Maximum dimension that can be processed at once (default is 9000).
-    
+
     Returns
     -------
     subimage_extents : list of tuples
@@ -622,25 +636,25 @@ def process_image(img_info, max_dim=9000):
     """
     # Get the image dimensions from img_info
     dim_img = [img_info['X_Y_raster_size'][0], img_info['X_Y_raster_size'][1]]
-    
+
     # Step 1: Determine the subdivisions (nrow, ncol) and adjusted dimensions
     x, y, nrow, ncol, del_row, del_col = subimages_definer(dim_img, max_dim)
-    
+
     print(f"Subdivided image into {nrow} rows and {ncol} columns")
     print(f"Adjusted dimensions: {x} x {y} (extra rows: {del_row}, extra cols: {del_col})")
-    
+
     # Step 2: Calculate the extents for each subimage
     resolution = img_info['geotransform'][1]
     subimage_extents = extent_cutter(img_info, nrow, ncol, resolution, x, y)
-    
+
     print("Subimage extents calculated:")
     for extent in subimage_extents:
         print(extent)
-    
+
     return subimage_extents
 
-def define_datetime(sensor,acquisition_name):
-    
+
+def define_datetime(sensor, acquisition_name):
     from datetime import datetime
     '''
     Parameters
@@ -659,50 +673,50 @@ def define_datetime(sensor,acquisition_name):
 
     '''
     if sensor == 'S2' and os.path.basename(acquisition_name).split('_')[1] == 'MSIL1C':
-       
-       date = os.path.basename(acquisition_name).split('_')[2].split('T')[0]
-       date_time_str = os.path.basename(acquisition_name).split('_')[2].split('T')[0] + os.path.basename(acquisition_name).split('_')[2].split('T')[1]
-       date_time = datetime.strptime(date_time_str, '%Y%m%d%H%M%S')
-       
+
+        date = os.path.basename(acquisition_name).split('_')[2].split('T')[0]
+        date_time_str = os.path.basename(acquisition_name).split('_')[2].split('T')[0] + \
+                        os.path.basename(acquisition_name).split('_')[2].split('T')[1]
+        date_time = datetime.strptime(date_time_str, '%Y%m%d%H%M%S')
+
     elif sensor == 'S2' and os.path.basename(acquisition_name).split('_')[1] == 'OPER':
-       
-       date = os.path.basename(acquisition_name).split('_')[7][1:].split('T')[0]
-       
+
+        date = os.path.basename(acquisition_name).split('_')[7][1:].split('T')[0]
+
     elif sensor == 'PRISMA':
-       
-       date = os.path.basename(acquisition_name).split('_')[4][:-6]
-       date_time_str = os.path.basename(acquisition_name).split('_')[4]
-       date_time = datetime.strptime(date_time_str, '%Y%m%d%H%M%S')
-       
-       
-    else:  
-       
-       try:
-           date = os.path.basename(acquisition_name).split('_')[3]
-       except: 
-           date = os.path.basename(glob.glob(acquisition_name+os.sep+"*B1_toa.tif")[0]).split('_')[3]
-           
-       metadata_file = glob.glob(os.path.join(acquisition_name, '*MTL.txt'))[0]
-       
-       with open(metadata_file) as fp:  
-           
-           # read all lines in a list
-           lines = fp.readlines()
-           for line in lines:
-               
-               # check if string present on a current line
-               if line.find('SCENE_CENTER_TIME') != -1:
-                                   
-                   time = line[25:33]
-                   
-                   date_time = datetime.strptime(date + str(time), '%Y%m%d%H:%M:%S')
-                   
-    return date_time,date
+
+        date = os.path.basename(acquisition_name).split('_')[4][:-6]
+        date_time_str = os.path.basename(acquisition_name).split('_')[4]
+        date_time = datetime.strptime(date_time_str, '%Y%m%d%H%M%S')
+
+
+    else:
+
+        try:
+            date = os.path.basename(acquisition_name).split('_')[3]
+        except:
+            date = os.path.basename(glob.glob(acquisition_name + os.sep + "*B1_toa.tif")[0]).split('_')[3]
+
+        metadata_file = glob.glob(os.path.join(acquisition_name, '*MTL.txt'))[0]
+
+        with open(metadata_file) as fp:
+
+            # read all lines in a list
+            lines = fp.readlines()
+            for line in lines:
+
+                # check if string present on a current line
+                if line.find('SCENE_CENTER_TIME') != -1:
+                    time = line[25:33]
+
+                    date_time = datetime.strptime(date + str(time), '%Y%m%d%H:%M:%S')
+
+    return date_time, date
 
 
 def perform_pca_on_geotiff(input_tiff, valid_mask, variance_threshold=0.95, no_data_value=-999):
     """
-    Reads a hyperspectral image, performs PCA to reduce dimensionality to the optimal number of components, 
+    Reads a hyperspectral image, performs PCA to reduce dimensionality to the optimal number of components,
     and saves the resulting PCA bands in a new GeoTIFF. PCA is applied only to valid areas defined by `valid_mask`.
 
     Parameters:
@@ -718,55 +732,56 @@ def perform_pca_on_geotiff(input_tiff, valid_mask, variance_threshold=0.95, no_d
     from sklearn.preprocessing import StandardScaler
 
     output_tiff = input_tiff[:-4] + '_PCA.tif'
-    
+
     if not os.path.exists(output_tiff):
         # Load hyperspectral image
         with rasterio.open(input_tiff) as src:
             img_data = src.read().astype(np.float32)
             n_bands, height, width = img_data.shape
-            
+
             # Check valid_mask dimensions
             if valid_mask.shape != (height, width):
                 raise ValueError("valid_mask dimensions do not match the image dimensions.")
-            
+
             # Flatten the spatial dimensions
             img_data_reshaped = img_data.reshape(n_bands, -1).T
             valid_mask_flat = valid_mask.flatten()
-            
+
             # Filter data based on valid_mask
             valid_data = img_data_reshaped[valid_mask_flat]
-            
+
             # Standardize valid data
             scaler = StandardScaler()
             valid_data_scaled = scaler.fit_transform(valid_data)
-            
+
             # Determine optimal number of components
             pca = PCA()
             pca.fit(valid_data_scaled)
             cumulative_variance = np.cumsum(pca.explained_variance_ratio_)
             optimal_components = np.argmax(cumulative_variance >= variance_threshold) + 1
-            
+
             print(f"Optimal number of components: {optimal_components}")
-            
+
             # Perform PCA with the optimal number of components
             pca = PCA(n_components=optimal_components)
             pca_data = pca.fit_transform(valid_data_scaled)
-            
+
             # Prepare the output array with no_data values
             pca_data_full = np.full((optimal_components, height * width), no_data_value, dtype=np.float32)
             pca_data_full[:, valid_mask_flat] = pca_data.T
-            
+
             # Reshape to (optimal_components, height, width)
             pca_data_reshaped = pca_data_full.reshape(optimal_components, height, width)
-            
+
             # Write PCA bands to a new GeoTIFF file
             profile = src.profile
             profile.update(count=optimal_components, dtype=rasterio.float32, nodata=no_data_value)
-            
+
             with rasterio.open(output_tiff, 'w', **profile) as dst:
                 dst.write(pca_data_reshaped)
-        
+
         print("PCA transformation complete. Output saved as:", output_tiff)
+
 
 def get_hemisphere(raster_path):
     """
@@ -804,6 +819,7 @@ def get_hemisphere(raster_path):
                 return "E"
     except Exception as e:
         return f"Error processing the raster: {e}"
+
 
 def give_time(start):
     """

@@ -5,6 +5,7 @@ Created on Fri Oct 25 12:07:46 2024
 
 @author: rbarella
 """
+import numpy as np
 
 from utilities import *
 from sklearn.mixture import GaussianMixture
@@ -42,14 +43,14 @@ def read_masked_values(geotiff_path, mask, bands=None):
     Returns
     -------
     masked_values : numpy.ndarray
-        2D array of values where each row contains the pixel values across bands 
+        2D array of values where each row contains the pixel values across bands
         for locations where the mask is True.
     """
     with rasterio.open(geotiff_path) as src:
         # If bands are not specified, read all bands
         if bands is None:
             bands = list(range(1, src.count + 1))
-        
+
         # List to store masked values for each band
         masked_values_per_band = []
 
@@ -63,7 +64,7 @@ def read_masked_values(geotiff_path, mask, bands=None):
     return masked_values
 
 
-def get_representative_pixels(bands_data, valid_mask, sample_count = 50, k='auto', n_closest='auto'):
+def get_representative_pixels(bands_data, valid_mask, sample_count=50, k='auto', n_closest='auto'):
     """
     Selects representative "no snow" pixels by clustering and distance to cluster centroids.
     Saves the output as a raster.
@@ -90,7 +91,7 @@ def get_representative_pixels(bands_data, valid_mask, sample_count = 50, k='auto
     # Normalize the valid pixels
     scaler = StandardScaler()
     normalized_pixels = scaler.fit_transform(valid_pixels)
-    
+
     # find optimal K
     if k == 'auto':
         k = find_optimal_k(normalized_pixels, max_k=10, method="elbow")
@@ -129,6 +130,7 @@ def get_representative_pixels(bands_data, valid_mask, sample_count = 50, k='auto
 
     return representative_pixels_mask
 
+
 def find_optimal_k(data, max_k=10, method="elbow", random_state=42):
     """
     Find the optimal number of clusters using the Elbow or Silhouette method.
@@ -165,6 +167,7 @@ def find_optimal_k(data, max_k=10, method="elbow", random_state=42):
 
     return optimal_k
 
+
 def plot_valid_pixels_percentage(ranges, percentage_per_angles_list, svm_folder_path):
     """
     Plots the percentage of valid pixels per angle range and saves the plot as a PNG file.
@@ -177,12 +180,12 @@ def plot_valid_pixels_percentage(ranges, percentage_per_angles_list, svm_folder_
     # Ensure ranges and percentage lists match
     if len(ranges) != len(percentage_per_angles_list):
         raise ValueError("Length of ranges and percentage_per_angles_list must match.")
-    
+
     # Create the bar plot
     x_labels = [f"{r[0]}-{r[1]}" for r in ranges]
     plt.figure(figsize=(10, 6))
     plt.bar(x_labels, percentage_per_angles_list, color='skyblue')
-    
+
     # Add title and labels
     plt.title("Percentage of Valid Pixels per Solar Incidence Angle Range", fontsize=14)
     plt.xlabel("Angle Ranges (degrees)", fontsize=12)
@@ -190,13 +193,14 @@ def plot_valid_pixels_percentage(ranges, percentage_per_angles_list, svm_folder_
     plt.xticks(fontsize=10)
     plt.yticks(fontsize=10)
     plt.grid(axis='y', linestyle='--', alpha=0.7)
-    
+
     # Save the plot
     output_path = os.path.join(svm_folder_path, 'valid_pixels_per_angle.png')
     plt.tight_layout()
     plt.savefig(output_path, dpi=300)
     plt.close()  # Close the plot to avoid display issues in non-interactive environments
     print(f"Plot saved to: {output_path}")
+
 
 def calculate_training_samples(solar_incidence_angle, ranges, total_samples):
     """
@@ -212,33 +216,35 @@ def calculate_training_samples(solar_incidence_angle, ranges, total_samples):
     """
     # Flatten the angle map for easier processing
     flattened_map = solar_incidence_angle.flatten()
-    
+
     # Initialize a dictionary to store the count for each range
     range_pixel_counts = {r: 0 for r in ranges}
-    
+
     # Count pixels in each range
     for r in ranges:
         range_pixel_counts[r] = np.sum((flattened_map >= r[0]) & (flattened_map < r[1]))
-    
+
     # Calculate the total number of pixels considered
     total_pixels = sum(range_pixel_counts.values())
-    
+
     # Calculate the proportion of samples for each range
     range_samples = {
         r: int(total_samples * (count / total_pixels)) + 20 if total_pixels > 0 else 0
         for r, count in range_pixel_counts.items()
     }
-    
+
     return range_samples
 
-def collect_trainings2(curr_acquisition, curr_aux_folder, auxiliary_folder_path, SVM_folder_name, no_data_mask, bands, PCA=False, total_samples = 500):
-    
+
+def collect_trainings2(curr_acquisition, curr_aux_folder, auxiliary_folder_path, SVM_folder_name, no_data_mask, bands,
+                       PCA=False, total_samples=500):
+    # TODO: This function is not used --> remove?
     scf_folder = os.path.join(curr_acquisition, SVM_folder_name)
     if not os.path.exists(scf_folder):
         os.makedirs(scf_folder)
-        
+
     sensor = get_sensor(os.path.basename(curr_acquisition))
-    
+
     path_cloud_mask = glob.glob(os.path.join(curr_aux_folder, '*cloud_Mask.tif'))[0]
     path_water_mask = glob.glob(os.path.join(auxiliary_folder_path, '*Water_Mask.tif'))[0]
     solar_incidence_angle_path = glob.glob(os.path.join(curr_aux_folder, '*solar_incidence_angle.tif'))[0]
@@ -247,45 +253,45 @@ def collect_trainings2(curr_acquisition, curr_aux_folder, auxiliary_folder_path,
     diff_B_NIR_path = glob.glob(os.path.join(curr_aux_folder, '*diffBNIR.tif'))[0]
     shad_idx_path = glob.glob(os.path.join(curr_aux_folder, '*shad_idx.tif'))[0]
     shadow_mask_path = glob.glob(os.path.join(curr_aux_folder, '*shadow_mask.tif'))[0]
-        
-    
+
     bands_path = glob.glob(os.path.join(curr_acquisition, '*scf.vrt'))
-    
+
     if bands_path == []:
         bands_path = [f for f in glob.glob(curr_acquisition + os.sep + "PRS*.tif") if 'PCA' not in f][0]
     else:
         bands_path = bands_path[0]
-        
+
     valid_mask = np.logical_not(no_data_mask)
-    
+
     # Load masks and other necessary data
     cloud_mask = open_image(path_cloud_mask)[0]
     water_mask = open_image(path_water_mask)[0]
     solar_incidence_angle = open_image(solar_incidence_angle_path)[0]
     curr_scene_valid = np.logical_not(np.logical_or.reduce((cloud_mask == 2, water_mask == 1, no_data_mask)))
-    
-    ranges = ((0,20), (20, 45), (45, 70), (70, 90), (90, 180))
+
+    ranges = ((0, 20), (20, 45), (45, 70), (70, 90), (90, 180))
     range_samples = calculate_training_samples(solar_incidence_angle, ranges, total_samples)
-    #ranges = ((70, 90))
-    
-    #ranges = ((0,20), (20, 30), (30, 40), (40, 50), (50, 60), (60, 70), (70, 80), (80, 90), (90, 180))
+    # ranges = ((70, 90))
+
+    # ranges = ((0,20), (20, 30), (30, 40), (40, 50), (50, 60), (60, 70), (70, 80), (80, 90), (90, 180))
     empty = np.zeros(curr_scene_valid.shape, dtype='uint8')
-    
+
     percentage_per_angles_list = []
     for curr_range, sample_count in range_samples.items():
         print(curr_range)
         print(sample_count)
-        
+
         # Initialize as empty arrays
         representative_pixels_mask_snow = np.array([])
         representative_pixels_mask_noSnow = np.array([])
-    
-        curr_angle_valid = np.logical_and(curr_scene_valid, np.logical_and(solar_incidence_angle >= curr_range[0], solar_incidence_angle < curr_range[1]))
-        
-        percentage_of_scene_valid =  np.sum(curr_angle_valid) / np.sum(curr_scene_valid)
-        
+
+        curr_angle_valid = np.logical_and(curr_scene_valid, np.logical_and(solar_incidence_angle >= curr_range[0],
+                                                                           solar_incidence_angle < curr_range[1]))
+
+        percentage_of_scene_valid = np.sum(curr_angle_valid) / np.sum(curr_scene_valid)
+
         percentage_per_angles_list.append(percentage_of_scene_valid)
-    
+
         curr_NDSI = read_masked_values(NDSI_path, curr_angle_valid)
         curr_NDVI = read_masked_values(NDVI_path, curr_angle_valid)
         curr_green = read_masked_values(bands_path, curr_angle_valid, bands=[2])
@@ -293,22 +299,28 @@ def collect_trainings2(curr_acquisition, curr_aux_folder, auxiliary_folder_path,
         curr_diff_B_NIR = read_masked_values(diff_B_NIR_path, curr_angle_valid)
         curr_shad_idx = read_masked_values(shad_idx_path, curr_angle_valid)
         curr_shadow_mask = read_masked_values(shadow_mask_path, curr_angle_valid)
-    
+
         # SNOW TRAINING SHADOW
-        
+
         # Normalize indices and compute shadow metric
         diff_B_NIR_low_perc, diff_B_NIR_high_perc = np.percentile(curr_diff_B_NIR, [2, 95])
         shad_idx_low_perc, shad_idx_high_perc = np.percentile(curr_shad_idx, [2, 95])
-        curr_diff_B_NIR_norm = np.clip((curr_diff_B_NIR - diff_B_NIR_low_perc) / (diff_B_NIR_high_perc - diff_B_NIR_low_perc), 0, 1)
-        curr_shad_idx_norm = np.clip((curr_shad_idx - shad_idx_low_perc) / (shad_idx_high_perc - shad_idx_low_perc), 0, 1)
+        curr_diff_B_NIR_norm = np.clip(
+            (curr_diff_B_NIR - diff_B_NIR_low_perc) / (diff_B_NIR_high_perc - diff_B_NIR_low_perc), 0, 1)
+        curr_shad_idx_norm = np.clip((curr_shad_idx - shad_idx_low_perc) / (shad_idx_high_perc - shad_idx_low_perc), 0,
+                                     1)
         curr_score_snow_shadow = curr_diff_B_NIR_norm - curr_shad_idx_norm
         threshold_shadow = np.percentile(curr_score_snow_shadow, 95)
-        curr_valid_snow_mask_shadow = np.logical_and.reduce((curr_score_snow_shadow >= threshold_shadow, curr_NDSI > 0.7, curr_shadow_mask == 1, curr_diff_B_NIR > 0.1)).flatten()
+        curr_valid_snow_mask_shadow = np.logical_and.reduce(
+            (curr_score_snow_shadow >= threshold_shadow, curr_NDSI > 0.7, curr_shadow_mask == 1,
+             curr_diff_B_NIR > 0.1)).flatten()
         if np.sum(curr_valid_snow_mask_shadow) > 10:
-            representative_pixels_mask_snow = get_representative_pixels(curr_bands, curr_valid_snow_mask_shadow, sample_count = int(sample_count/3), k=5, n_closest='auto')
-        
+            representative_pixels_mask_snow = get_representative_pixels(curr_bands, curr_valid_snow_mask_shadow,
+                                                                        sample_count=int(sample_count / 3), k=5,
+                                                                        n_closest='auto')
+
         # SNOW TRAINING SUN
-        
+
         # Normalize indices and compute sun metric
         NDSI_low_perc, NDSI_high_perc = np.percentile(curr_NDSI[np.logical_not(np.isnan(curr_NDSI))], [1, 99])
         NDVI_low_perc, NDVI_high_perc = np.percentile(curr_NDVI[np.logical_not(np.isnan(curr_NDVI))], [1, 99])
@@ -318,41 +330,46 @@ def collect_trainings2(curr_acquisition, curr_aux_folder, auxiliary_folder_path,
         curr_green_norm = np.clip((curr_green - green_low_perc) / (green_high_perc - green_low_perc), 0, 1)
         curr_score_snow_sun = curr_NDSI_norm - curr_NDVI_norm + curr_green_norm
         threshold = np.percentile(curr_score_snow_sun, 95)
-        curr_valid_snow_mask = np.logical_and.reduce((curr_score_snow_sun >= threshold, curr_NDSI > 0.7, curr_shadow_mask == 0)).flatten()
-        
+        curr_valid_snow_mask = np.logical_and.reduce(
+            (curr_score_snow_sun >= threshold, curr_NDSI > 0.7, curr_shadow_mask == 0)).flatten()
+
         if np.sum(curr_valid_snow_mask) > 10:
-            representative_pixels_mask_snow = get_representative_pixels(curr_bands, curr_valid_snow_mask, sample_count = int(sample_count/4), k=5, n_closest='auto')
-        
-        
-       
-            
+            representative_pixels_mask_snow = get_representative_pixels(curr_bands, curr_valid_snow_mask,
+                                                                        sample_count=int(sample_count / 4), k=5,
+                                                                        n_closest='auto')
+
         ## NO snow TRAINING SHADOW
-        
+
         threshold_shadow_no_snow = np.percentile(curr_score_snow_shadow, 5)
-        curr_valid_no_snow_mask_shadow = np.logical_and.reduce((curr_score_snow_shadow <= threshold_shadow_no_snow, curr_diff_B_NIR < 0.08, curr_shadow_mask == 1)).flatten()
-        
+        curr_valid_no_snow_mask_shadow = np.logical_and.reduce(
+            (curr_score_snow_shadow <= threshold_shadow_no_snow, curr_diff_B_NIR < 0.08,
+             curr_shadow_mask == 1)).flatten()
+
         if np.sum(curr_valid_no_snow_mask_shadow) > 10:
-            representative_pixels_mask_noSnow = get_representative_pixels(curr_bands, curr_valid_no_snow_mask_shadow, sample_count = int(sample_count/4), k=5, n_closest='auto') * 2
-    
-       ## NO snow TRAINING SUN
+            representative_pixels_mask_noSnow = get_representative_pixels(curr_bands, curr_valid_no_snow_mask_shadow,
+                                                                          sample_count=int(sample_count / 4), k=5,
+                                                                          n_closest='auto') * 2
+
+        ## NO snow TRAINING SUN
         curr_valid_no_snow_mask = (curr_NDSI < 0).flatten()
-        
+
         if np.sum(curr_valid_no_snow_mask) > 10:
-            representative_pixels_mask_noSnow = get_representative_pixels(curr_bands, curr_valid_no_snow_mask, sample_count = int(sample_count/4), k=10, n_closest='auto') * 2
+            representative_pixels_mask_noSnow = get_representative_pixels(curr_bands, curr_valid_no_snow_mask,
+                                                                          sample_count=int(sample_count / 4), k=10,
+                                                                          n_closest='auto') * 2
 
         # Check if masks have been assigned; if not, set as zeros
         if representative_pixels_mask_snow.size == 0:
             representative_pixels_mask_snow = np.zeros(curr_angle_valid.sum(), dtype='uint8')
         if representative_pixels_mask_noSnow.size == 0:
             representative_pixels_mask_noSnow = np.zeros(curr_angle_valid.sum(), dtype='uint8')
-            
+
         representative_pixels_mask = representative_pixels_mask_noSnow + representative_pixels_mask_snow
         empty[curr_angle_valid] = representative_pixels_mask
-        
+
         print(str(np.sum(representative_pixels_mask_snow.flatten())) + ' SNOW PIXELS')
         print(str(np.sum(representative_pixels_mask_noSnow.flatten() / 2)) + ' NO SNOW PIXELS')
 
-    
     # Convert points where result == 1 or 2 to a shapefile
     points = []
     values = []
@@ -364,33 +381,33 @@ def collect_trainings2(curr_acquisition, curr_aux_folder, auxiliary_folder_path,
 
     gdf = gpd.GeoDataFrame({"value": values}, geometry=points, crs=src.crs)
     svm_folder_path = os.path.join(curr_acquisition, SVM_folder_name)
-    
+
     plot_valid_pixels_percentage(ranges, percentage_per_angles_list, svm_folder_path)
-    
+
     shapefile_path = os.path.join(svm_folder_path, 'representative_pixels_for_training_samples.shp')
     gdf.to_file(shapefile_path, driver="ESRI Shapefile")
-    
+
     training_mask_path = os.path.join(svm_folder_path, 'representative_pixels_for_training_samples.tif')
-    
+
     # Update the profile and save the representative mask
     with rasterio.open(NDSI_path) as src:
         profile = src.profile
     profile.update(dtype='uint8', count=1, compress='lzw', nodata=0)
-    
+
     with rasterio.open(training_mask_path, 'w', **profile) as dst:
         dst.write(empty, 1)
 
-    return shapefile_path , training_mask_path      
+    return shapefile_path, training_mask_path
 
 
-def collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, SVM_folder_name, no_data_mask, bands, PCA=False, total_samples = 500):
-    
+def collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, SVM_folder_name, no_data_mask, bands,
+                      PCA=False, total_samples=500):
     scf_folder = os.path.join(curr_acquisition, SVM_folder_name)
     if not os.path.exists(scf_folder):
         os.makedirs(scf_folder)
-        
+
     sensor = get_sensor(os.path.basename(curr_acquisition))
-    
+
     path_cloud_mask = glob.glob(os.path.join(curr_aux_folder, '*cloud_Mask.tif'))[0]
     path_water_mask = glob.glob(os.path.join(auxiliary_folder_path, '*Water_Mask.tif'))[0]
     solar_incidence_angle_path = glob.glob(os.path.join(curr_aux_folder, '*solar_incidence_angle.tif'))[0]
@@ -399,45 +416,45 @@ def collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, 
     diff_B_NIR_path = glob.glob(os.path.join(curr_aux_folder, '*diffBNIR.tif'))[0]
     shad_idx_path = glob.glob(os.path.join(curr_aux_folder, '*shad_idx.tif'))[0]
     distance_index_path = glob.glob(os.path.join(curr_aux_folder, '*distance.tif'))[0]
-        
-    
+
     bands_path = glob.glob(os.path.join(curr_acquisition, '*scf.vrt'))
-    
+
     if bands_path == []:
         bands_path = [f for f in glob.glob(curr_acquisition + os.sep + "PRS*.tif") if 'PCA' not in f][0]
     else:
         bands_path = bands_path[0]
-        
+
     valid_mask = np.logical_not(no_data_mask)
-    
+
     # Load masks and other necessary data
     cloud_mask = open_image(path_cloud_mask)[0]
     water_mask = open_image(path_water_mask)[0]
     solar_incidence_angle = open_image(solar_incidence_angle_path)[0]
     curr_scene_valid = np.logical_not(np.logical_or.reduce((cloud_mask == 2, water_mask == 1, no_data_mask)))
-    
-    ranges = ((0,20), (20, 45), (45, 70), (70, 90), (90, 180))
+
+    ranges = ((0, 20), (20, 45), (45, 70), (70, 90), (90, 180))
     range_samples = calculate_training_samples(solar_incidence_angle, ranges, total_samples)
-    #ranges = ((70, 90))
-    
-    #ranges = ((0,20), (20, 30), (30, 40), (40, 50), (50, 60), (60, 70), (70, 80), (80, 90), (90, 180))
+    # ranges = ((70, 90))
+
+    # ranges = ((0,20), (20, 30), (30, 40), (40, 50), (50, 60), (60, 70), (70, 80), (80, 90), (90, 180))
     empty = np.zeros(curr_scene_valid.shape, dtype='uint8')
-    
+
     percentage_per_angles_list = []
     for curr_range, sample_count in range_samples.items():
         print(curr_range)
         print(sample_count)
-        
+
         # Initialize as empty arrays
         representative_pixels_mask_snow = np.array([])
         representative_pixels_mask_noSnow = np.array([])
-    
-        curr_angle_valid = np.logical_and(curr_scene_valid, np.logical_and(solar_incidence_angle >= curr_range[0], solar_incidence_angle < curr_range[1]))
-        
-        percentage_of_scene_valid =  np.sum(curr_angle_valid) / np.sum(curr_scene_valid)
-        
+
+        curr_angle_valid = np.logical_and(curr_scene_valid, np.logical_and(solar_incidence_angle >= curr_range[0],
+                                                                           solar_incidence_angle < curr_range[1]))
+
+        percentage_of_scene_valid = np.sum(curr_angle_valid) / np.sum(curr_scene_valid)
+
         percentage_per_angles_list.append(percentage_of_scene_valid)
-    
+
         curr_NDSI = read_masked_values(NDSI_path, curr_angle_valid)
         curr_NDVI = read_masked_values(NDVI_path, curr_angle_valid)
         curr_green = read_masked_values(bands_path, curr_angle_valid, bands=[2])
@@ -445,19 +462,24 @@ def collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, 
         curr_diff_B_NIR = read_masked_values(diff_B_NIR_path, curr_angle_valid)
         curr_shad_idx = read_masked_values(shad_idx_path, curr_angle_valid)
         curr_distance_idx = read_masked_values(distance_index_path, curr_angle_valid)
-    
+
         # SNOW TRAINING
         if curr_range[0] >= 90:
             # Normalize indices and compute shadow metric
             diff_B_NIR_low_perc, diff_B_NIR_high_perc = np.percentile(curr_diff_B_NIR, [2, 95])
             shad_idx_low_perc, shad_idx_high_perc = np.percentile(curr_shad_idx, [2, 95])
-            curr_diff_B_NIR_norm = np.clip((curr_diff_B_NIR - diff_B_NIR_low_perc) / (diff_B_NIR_high_perc - diff_B_NIR_low_perc), 0, 1)
-            curr_shad_idx_norm = np.clip((curr_shad_idx - shad_idx_low_perc) / (shad_idx_high_perc - shad_idx_low_perc), 0, 1)
+            curr_diff_B_NIR_norm = np.clip(
+                (curr_diff_B_NIR - diff_B_NIR_low_perc) / (diff_B_NIR_high_perc - diff_B_NIR_low_perc), 0, 1)
+            curr_shad_idx_norm = np.clip((curr_shad_idx - shad_idx_low_perc) / (shad_idx_high_perc - shad_idx_low_perc),
+                                         0, 1)
             curr_score_snow_shadow = curr_diff_B_NIR_norm - curr_shad_idx_norm
             threshold_shadow = np.percentile(curr_score_snow_shadow, 95)
-            curr_valid_snow_mask_shadow = np.logical_and.reduce((curr_score_snow_shadow >= threshold_shadow, curr_NDSI > 0.7, curr_distance_idx != 255)).flatten()
+            curr_valid_snow_mask_shadow = np.logical_and.reduce(
+                (curr_score_snow_shadow >= threshold_shadow, curr_NDSI > 0.7, curr_distance_idx != 255)).flatten()
             if np.sum(curr_valid_snow_mask_shadow) > 10:
-                representative_pixels_mask_snow = get_representative_pixels(curr_bands, curr_valid_snow_mask_shadow, sample_count = int(sample_count/2), k=5, n_closest='auto')
+                representative_pixels_mask_snow = get_representative_pixels(curr_bands, curr_valid_snow_mask_shadow,
+                                                                            sample_count=int(sample_count / 2), k=5,
+                                                                            n_closest='auto')
         else:
             # Normalize indices and compute sun metric
             NDSI_low_perc, NDSI_high_perc = np.percentile(curr_NDSI[np.logical_not(np.isnan(curr_NDSI))], [1, 99])
@@ -468,37 +490,44 @@ def collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, 
             curr_green_norm = np.clip((curr_green - green_low_perc) / (green_high_perc - green_low_perc), 0, 1)
             curr_score_snow_sun = curr_NDSI_norm - curr_NDVI_norm + curr_green_norm
             threshold = np.percentile(curr_score_snow_sun, 95)
-            curr_valid_snow_mask = np.logical_and.reduce((curr_score_snow_sun >= threshold, curr_NDSI > 0.7, curr_distance_idx != 255)).flatten()
-            
+            curr_valid_snow_mask = np.logical_and.reduce(
+                (curr_score_snow_sun >= threshold, curr_NDSI > 0.7, curr_distance_idx != 255)).flatten()
+
             if np.sum(curr_valid_snow_mask) > 10:
-                representative_pixels_mask_snow = get_representative_pixels(curr_bands, curr_valid_snow_mask, sample_count = int(sample_count/2), k=5, n_closest='auto')
-    
+                representative_pixels_mask_snow = get_representative_pixels(curr_bands, curr_valid_snow_mask,
+                                                                            sample_count=int(sample_count / 2), k=5,
+                                                                            n_closest='auto')
+
         ## NO snow TRAINING
         if curr_range[0] >= 90:
             threshold_shadow_no_snow = np.percentile(curr_score_snow_shadow, 5)
             curr_valid_no_snow_mask_shadow = (curr_score_snow_shadow <= threshold_shadow_no_snow).flatten()
-            
+
             if np.sum(curr_valid_no_snow_mask_shadow) > 10:
-                representative_pixels_mask_noSnow = get_representative_pixels(curr_bands, curr_valid_no_snow_mask_shadow, sample_count = int(sample_count/2), k=5, n_closest='auto') * 2
+                representative_pixels_mask_noSnow = get_representative_pixels(curr_bands,
+                                                                              curr_valid_no_snow_mask_shadow,
+                                                                              sample_count=int(sample_count / 2), k=5,
+                                                                              n_closest='auto') * 2
         else:
             curr_valid_no_snow_mask = (curr_NDSI < 0).flatten()
-            
+
             if np.sum(curr_valid_no_snow_mask) > 10:
-                representative_pixels_mask_noSnow = get_representative_pixels(curr_bands, curr_valid_no_snow_mask, sample_count = int(sample_count/2), k=10, n_closest='auto') * 2
-    
+                representative_pixels_mask_noSnow = get_representative_pixels(curr_bands, curr_valid_no_snow_mask,
+                                                                              sample_count=int(sample_count / 2), k=10,
+                                                                              n_closest='auto') * 2
+
         # Check if masks have been assigned; if not, set as zeros
         if representative_pixels_mask_snow.size == 0:
             representative_pixels_mask_snow = np.zeros(curr_angle_valid.sum(), dtype='uint8')
         if representative_pixels_mask_noSnow.size == 0:
             representative_pixels_mask_noSnow = np.zeros(curr_angle_valid.sum(), dtype='uint8')
-            
+
         representative_pixels_mask = representative_pixels_mask_noSnow + representative_pixels_mask_snow
         empty[curr_angle_valid] = representative_pixels_mask
-        
+
         print(str(np.sum(representative_pixels_mask_snow.flatten())) + ' SNOW PIXELS')
         print(str(np.sum(representative_pixels_mask_noSnow.flatten() / 2)) + ' NO SNOW PIXELS')
 
-    
     # Convert points where result == 1 or 2 to a shapefile
     points = []
     values = []
@@ -510,34 +539,36 @@ def collect_trainings(curr_acquisition, curr_aux_folder, auxiliary_folder_path, 
 
     gdf = gpd.GeoDataFrame({"value": values}, geometry=points, crs=src.crs)
     svm_folder_path = os.path.join(curr_acquisition, SVM_folder_name)
-    
+
     plot_valid_pixels_percentage(ranges, percentage_per_angles_list, svm_folder_path)
-    
+
     shapefile_path = os.path.join(svm_folder_path, 'representative_pixels_for_training_samples.shp')
     gdf.to_file(shapefile_path, driver="ESRI Shapefile")
-    
-    training_mask_path = os.path.join(svm_folder_path, 'representative_pixels_for_training_samples.tif')
-    
+
+    # training_mask_path = os.path.join(svm_folder_path, 'representative_pixels_for_training_samples.tif')
+
     # Update the profile and save the representative mask
     with rasterio.open(NDSI_path) as src:
         profile = src.profile
     profile.update(dtype='uint8', count=1, compress='lzw', nodata=0)
-    
-    with rasterio.open(training_mask_path, 'w', **profile) as dst:
-        dst.write(empty, 1)
 
-    return shapefile_path , training_mask_path   
-  
+    # with rasterio.open(training_mask_path, 'w', **profile) as dst:
+    #     dst.write(empty, 1)
+
+    # return shapefile_path , training_mask_path
+    return shapefile_path
+
+
 def rbf_kernel(X, gamma):
     """
     Computes the RBF (Gaussian) kernel matrix for the dataset X.
-    
+
     Parameters:
     - X: np.ndarray, shape (n_samples, n_features)
         The input data.
     - gamma: float
         The parameter for the RBF kernel, defined as 1 / (2 * sigma^2).
-        
+
     Returns:
     - K: np.ndarray, shape (n_samples, n_samples)
         The RBF kernel matrix.
@@ -550,7 +581,7 @@ def rbf_kernel(X, gamma):
 def kernel_kmeans(X, n_clusters, gamma, max_iter=100):
     """
     Performs k-means clustering using an RBF kernel instead of Euclidean distance.
-    
+
     Parameters:
     - X: np.ndarray, shape (n_samples, n_features)
         The input data.
@@ -560,7 +591,7 @@ def kernel_kmeans(X, n_clusters, gamma, max_iter=100):
         Parameter for the RBF kernel, defined as 1 / (2 * sigma^2).
     - max_iter: int, optional, default=100
         Maximum number of iterations for the algorithm.
-        
+
     Returns:
     - labels: np.ndarray, shape (n_samples,)
         The cluster labels for each sample.
@@ -569,11 +600,11 @@ def kernel_kmeans(X, n_clusters, gamma, max_iter=100):
     """
     # Step 1: Compute the kernel matrix
     K = rbf_kernel(X, gamma)
-    
+
     # Step 2: Initialize cluster assignments randomly
     n_samples = X.shape[0]
     labels = np.random.randint(0, n_clusters, n_samples)
-    
+
     # Step 3: Kernel k-means iteration
     for _ in range(max_iter):
         # Compute distances to centroids in the transformed space
@@ -585,23 +616,20 @@ def kernel_kmeans(X, n_clusters, gamma, max_iter=100):
                 # Compute the distance to the "centroid" in the kernel space
                 distances[:, k] = np.diag(K) - 2 * np.sum(cluster_k, axis=1) / N_k + \
                                   np.sum(K[labels == k][:, labels == k]) / (N_k ** 2)
-        
+
         # Update labels based on minimal distance
         new_labels = np.argmin(distances, axis=1)
-        
+
         # Check for convergence
         if np.all(labels == new_labels):
             break
-        
+
         labels = new_labels
 
     # Step 4: Compute approximate centroids in the original space
     centroids = np.array([X[labels == k].mean(axis=0) for k in range(n_clusters)])
-    
+
     return labels, centroids
-
-
-
 
 
 def cop_k_means_vectorized(X, fixed_labels, k=3, max_iter=100, tol=1e-4):
@@ -609,7 +637,7 @@ def cop_k_means_vectorized(X, fixed_labels, k=3, max_iter=100, tol=1e-4):
     A simplified, vectorized COP-k-means implementation.
     Fixed points (fixed_labels != -1) are not reassigned.
     Unconstrained points (fixed_labels == -1) are assigned via a vectorized distance computation.
-    
+
     Parameters:
       X: array of shape (n_samples, n_features)
       fixed_labels: array of shape (n_samples,) with values:
@@ -618,14 +646,14 @@ def cop_k_means_vectorized(X, fixed_labels, k=3, max_iter=100, tol=1e-4):
           2 for sure no snow (class 3)
       k: number of clusters (should be 3)
       max_iter: maximum iterations
-      
+
     Returns:
       assignments: cluster assignments (0, 1, or 2) for each sample
       centroids: array of shape (k, n_features)
     """
     n_samples, n_features = X.shape
     assignments = np.full(n_samples, -1, dtype=int)
-    
+
     # Set fixed assignments:
     assignments[fixed_labels == 0] = 0
     assignments[fixed_labels == 2] = 2
@@ -634,13 +662,14 @@ def cop_k_means_vectorized(X, fixed_labels, k=3, max_iter=100, tol=1e-4):
     centroids = np.zeros((k, n_features))
     idx0 = np.flatnonzero(fixed_labels == 0)
     centroids[0] = X[idx0[0]] if len(idx0) > 0 else X[np.random.choice(n_samples)]
-    
+
     idx2 = np.flatnonzero(fixed_labels == 2)
     centroids[2] = X[idx2[0]] if len(idx2) > 0 else X[np.random.choice(n_samples)]
-    
+
     idx_unconstrained = np.flatnonzero(fixed_labels == -1)
-    centroids[1] = X[np.random.choice(idx_unconstrained)] if len(idx_unconstrained) > 0 else X[np.random.choice(n_samples)]
-    
+    centroids[1] = X[np.random.choice(idx_unconstrained)] if len(idx_unconstrained) > 0 else X[
+        np.random.choice(n_samples)]
+
     for iteration in range(max_iter):
         prev_assignments = assignments.copy()
         # Get indices of unconstrained points
@@ -651,37 +680,34 @@ def cop_k_means_vectorized(X, fixed_labels, k=3, max_iter=100, tol=1e-4):
             # Compute squared Euclidean distances using vectorized dot-product formula:
             # dist(i, j) = ||U[i] - centroids[j]||^2
             #             = sum(U[i]**2) + sum(centroids[j]**2) - 2 * U[i] dot centroids[j]
-            U_sq = np.sum(U**2, axis=1)[:, np.newaxis]    # shape: (n_unconstrained, 1)
-            C_sq = np.sum(centroids**2, axis=1)[np.newaxis, :]  # shape: (1, k)
+            U_sq = np.sum(U ** 2, axis=1)[:, np.newaxis]  # shape: (n_unconstrained, 1)
+            C_sq = np.sum(centroids ** 2, axis=1)[np.newaxis, :]  # shape: (1, k)
             dists = U_sq + C_sq - 2 * np.dot(U, centroids.T)  # shape: (n_unconstrained, k)
-            
+
             # Assign each unconstrained point to the closest centroid
             assignments[unconstrained_idx] = np.argmin(dists, axis=1)
-        
+
         # Update centroids for each cluster (k is small, so a loop is fine)
         for c in range(k):
             indices = np.flatnonzero(assignments == c)
             if len(indices) > 0:
                 centroids[c] = np.mean(X[indices], axis=0)
-        
+
         # Check for convergence
         if np.array_equal(assignments, prev_assignments):
             print(f"Converged at iteration {iteration}")
             break
-    
+
     return assignments, centroids
 
 
 def glacier_classifier(curr_acquisition, curr_aux_folder, auxiliary_folder_path, SVM_folder_name, no_data_mask, bands):
-    
-    
-    
     scf_folder = os.path.join(curr_acquisition, SVM_folder_name)
     if not os.path.exists(scf_folder):
         os.makedirs(scf_folder)
-        
+
     sensor = get_sensor(os.path.basename(curr_acquisition))
-    
+
     path_cloud_mask = glob.glob(os.path.join(curr_aux_folder, '*cloud_Mask.tif'))[0]
     path_water_mask = glob.glob(os.path.join(auxiliary_folder_path, '*Water_Mask.tif'))[0]
     solar_incidence_angle_path = glob.glob(os.path.join(curr_aux_folder, '*solar_incidence_angle.tif'))[0]
@@ -691,19 +717,18 @@ def glacier_classifier(curr_acquisition, curr_aux_folder, auxiliary_folder_path,
     shad_idx_path = glob.glob(os.path.join(curr_aux_folder, '*shad_idx.tif'))[0]
     dem_path = glob.glob(os.path.join(auxiliary_folder_path, '*DEM.tif'))[0]
     band_ratio_glaciers_path = glob.glob(os.path.join(curr_aux_folder, '*Glaciers.tif'))[0]
-    
+
     glacier_mask_path = glob.glob(os.path.join(auxiliary_folder_path, '*glacier*.tif'))[0]
-        
-    
+
     bands_path = glob.glob(os.path.join(curr_acquisition, '*scf.vrt'))
-    
+
     if bands_path == []:
         bands_path = [f for f in glob.glob(curr_acquisition + os.sep + "PRS*.tif") if 'PCA' not in f][0]
     else:
         bands_path = bands_path[0]
-        
+
     valid_mask = np.logical_not(no_data_mask)
-    
+
     # Load masks and other necessary data
     cloud_mask = open_image(path_cloud_mask)[0]
     water_mask = open_image(path_water_mask)[0]
@@ -712,30 +737,28 @@ def glacier_classifier(curr_acquisition, curr_aux_folder, auxiliary_folder_path,
     glacier_index = open_image(band_ratio_glaciers_path)[0]
     dem = open_image(dem_path)[0]
     ndsi = open_image(NDSI_path)[0]
-     
-    curr_scene_valid_gl = np.logical_not(np.logical_or.reduce((cloud_mask == 2, water_mask == 1, no_data_mask, glacier_mask ==0)))
+
+    curr_scene_valid_gl = np.logical_not(
+        np.logical_or.reduce((cloud_mask == 2, water_mask == 1, no_data_mask, glacier_mask == 0)))
     curr_scene_valid = np.logical_not(np.logical_or.reduce((cloud_mask == 2, water_mask == 1, no_data_mask)))
-    
+
     green = define_bands(open_image(bands_path)[0], valid_mask, sensor)['GREEN']
-    
-    
-    
+
     ### COP K means
-    
+
     bands = open_image(bands_path)[0]
-    
-    sure_snow = np.logical_and.reduce((curr_scene_valid, ndsi>0.7, green>0.5))
-    
-    sure_no_snow = np.logical_and(curr_scene_valid, ndsi<0.1)
-    
- 
+
+    sure_snow = np.logical_and.reduce((curr_scene_valid, ndsi > 0.7, green > 0.5))
+
+    sure_no_snow = np.logical_and(curr_scene_valid, ndsi < 0.1)
+
     Nfeatures, Nrows, Ncols = bands.shape
-    
+
     # Convert bands to a 2D data matrix where each row is a pixel's feature vector.
     # Since bands is (Nfeatures, Nrows, Ncols), we transpose to (Nrows, Ncols, Nfeatures) and then reshape.
     X = bands.transpose(1, 2, 0).reshape(-1, Nfeatures)
     n_pixels = Nrows * Ncols
-    
+
     # Build fixed_labels for the full image:
     # - Pixels in sure_snow get label 0.
     # - Pixels in sure_no_snow get label 2.
@@ -743,42 +766,38 @@ def glacier_classifier(curr_acquisition, curr_aux_folder, auxiliary_folder_path,
     fixed_labels = - np.ones(n_pixels, dtype=int)
     fixed_labels[sure_snow.flatten()] = 0
     fixed_labels[sure_no_snow.flatten()] = 2
-    
+
     # Run the vectorized COP-k-means on the full dataset.
     assignments, centroids = cop_k_means_vectorized(X, fixed_labels, k=3, max_iter=100)
-   
-    
+
     # Optionally re-enforce fixed assignments
     # assignments[sure_snow.flatten()] = 100
     # assignments[sure_no_snow.flatten()] = 0
-    assignments[assignments == 0] = 100 
-    assignments[assignments == 1] = 215 
-    assignments[assignments == 2] = 0 
+    assignments[assignments == 0] = 100
+    assignments[assignments == 1] = 215
+    assignments[assignments == 2] = 0
     assignments[assignments == -1] = 255
-    
+
     # Reshape the assignments to (Nrows, Ncols)
     full_cluster_map = assignments.reshape(Nrows, Ncols)
-    #plt.imshow(full_cluster_map, cmap='viridis')
-    
-    
+    # plt.imshow(full_cluster_map, cmap='viridis')
+
     # Create a classified map over only the valid region (curr_scene_valid_gl)
     valid_class_map = 255 * np.ones((Nrows, Ncols), dtype=int)
     valid_class_map[curr_scene_valid_gl] = full_cluster_map[curr_scene_valid_gl]
-    
-   # valid_class_map[valid_class_map == -1] = 2
-    
-    
-    #Visualization of the valid region classification
+
+    # valid_class_map[valid_class_map == -1] = 2
+
+    # Visualization of the valid region classification
     # plt.figure(figsize=(8, 6))
     # plt.imshow(valid_class_map, cmap='viridis')
     # plt.title("COP-k-means Cluster Assignment (Valid Region)")
     # plt.colorbar(label='Cluster Label')
     # plt.show()
-    
+
     return valid_class_map
-    
-    
-  
+
+
 # def thematic_map_classifier(curr_acquisition, curr_aux_folder, auxiliary_folder_path, no_data_mask, SVM_folder_name):
 #     """
 #     Generate a thematic map using precomputed indices and bands.
@@ -795,7 +814,7 @@ def glacier_classifier(curr_acquisition, curr_aux_folder, auxiliary_folder_path,
 #       no_data_mask: numpy array, boolean mask where True indicates no-data pixels
 #       SVM_folder_name: str, name of the folder to store intermediate outputs if needed
 #     """
-    
+
 #     # Create folder to store outputs if it doesn't exist
 #     thematic_folder = os.path.join(curr_acquisition, SVM_folder_name)
 #     if not os.path.exists(thematic_folder):
@@ -807,14 +826,14 @@ def glacier_classifier(curr_acquisition, curr_aux_folder, auxiliary_folder_path,
 #     NDSI_path = glob.glob(os.path.join(curr_aux_folder, '*NDSI.tif'))[0]
 #     NDVI_path = glob.glob(os.path.join(curr_aux_folder, '*NDVI.tif'))[0]
 #     glacier_mask_path = glob.glob(os.path.join(auxiliary_folder_path, '*glacier*.tif'))[0]
-    
+
 #     # Find the main bands file. Look for a VRT first; if not found, fallback to a TIF.
 #     bands_path_list = glob.glob(os.path.join(curr_acquisition, '*scf.vrt'))
 #     if bands_path_list == []:
 #         bands_path = [f for f in glob.glob(os.path.join(curr_acquisition, "PRS*.tif")) if 'PCA' not in f][0]
 #     else:
 #         bands_path = bands_path_list[0]
-        
+
 #     # Load the image bands using your open_image function.
 #     # Assume the returned bands array has shape (Nfeatures, Nrows, Ncols)
 #     bands = define_bands(open_image(bands_path)[0], valid_mask, sensor)
@@ -824,38 +843,38 @@ def glacier_classifier(curr_acquisition, curr_aux_folder, auxiliary_folder_path,
 #     red  = bands['RED']
 #     nir  = bands['NIR']
 #     swir = bands['SWIR']
-    
+
 #     # Load indices
 #     ndsi  = open_image(NDSI_path)[0]
 #     ndvi  = open_image(NDVI_path)[0]
-    
+
 #     # Load external masks for clouds and water
 #     cloud_mask = open_image(path_cloud_mask)[0]
 #     water_mask = open_image(path_water_mask)[0]
 #     glacier_mask = open_image(glacier_mask_path)[0]
-    
+
 #     # Create a valid data mask from the no_data_mask (True means valid)
 #     valid_mask = np.logical_not(no_data_mask)
-    
+
 #     # Compute red/SWIR ratio (adding a small constant to avoid division by zero)
 #     red_swir = red / (swir + 1e-10)
-    
+
 #     # Set classification thresholds (you can fine-tune these values)
 #     ndsi_threshold = 0.4      # Only consider pixels with ndsi above this value
 #     red_swir_threshold = 0.9  # Differentiate snow (>= threshold) from ice (< threshold)
-    
+
 #     # Build a candidate mask: pixels with sufficient NDSI are considered for snow/ice classification.
 #     candidate_mask = ndsi > ndsi_threshold
-    
-    
+
+
 #     snow_mask = candidate_mask & (red_swir < red_swir_threshold)
 #     ice_mask  = candidate_mask & (red_swir >= red_swir_threshold)
-    
+
 #     # Initialize the thematic map with snow free (0)
 #     thematic_map = np.zeros_like(blue, dtype=np.uint8)
 #     thematic_map[snow_mask] = 100
 #     thematic_map[ice_mask]  = 215
-    
+
 #     # Optionally, mark pixels that are invalid (no-data, clouds, or water) as 255
 #     invalid_mask = np.logical_or.reduce((np.logical_not(valid_mask),
 #                                            cloud_mask == 2,
@@ -864,25 +883,22 @@ def glacier_classifier(curr_acquisition, curr_aux_folder, auxiliary_folder_path,
 #     thematic_map[water_mask == 1] = 210
 #     thematic_map[np.logical_and(glacier_mask == 0, thematic_map == 215)] = 100
 #     # Define output path
-  
+
 #     output_path = os.path.join(curr_acquisition, SVM_folder_name, os.path.basename(curr_acquisition) + '_simple_class.tif')
 #     # Open the raster
 #     with rasterio.open(path_cloud_mask) as src:
 #         meta = src.meta.copy()
-    
+
 #     # Save the modified raster
 #     with rasterio.open(output_path, 'w', **meta) as dst:
 #         dst.write(thematic_map, 1)
-    
-    
-    
+
+
 #     return thematic_map
-    
 
 
-
-def thematic_map_classifier(curr_acquisition, curr_aux_folder, auxiliary_folder_path, 
-                            no_data_mask, SVM_folder_name, classify_glaciers, 
+def thematic_map_classifier(curr_acquisition, curr_aux_folder, auxiliary_folder_path,
+                            no_data_mask, SVM_folder_name, classify_glaciers,
                             date_time, dt_start_glaciers_month, dt_end_glaciers_month):
     """
     Generate a thematic map using precomputed indices and bands.
@@ -905,58 +921,64 @@ def thematic_map_classifier(curr_acquisition, curr_aux_folder, auxiliary_folder_
       dt_start_glaciers_month: datetime, start month for glacier classification
       dt_end_glaciers_month: datetime, end month for glacier classification
     """
-    
+
     # Create folder to store outputs if it doesn't exist
     thematic_folder = os.path.join(curr_acquisition, SVM_folder_name)
     if not os.path.exists(thematic_folder):
         os.makedirs(thematic_folder)
-        
+
     sensor = get_sensor(os.path.basename(curr_acquisition))
-    
+
     # Define paths for auxiliary files
     path_cloud_mask = glob.glob(os.path.join(curr_aux_folder, '*cloud_Mask.tif'))[0]
     path_water_mask = glob.glob(os.path.join(auxiliary_folder_path, '*Water_Mask.tif'))[0]
     NDSI_path = glob.glob(os.path.join(curr_aux_folder, '*NDSI.tif'))[0]
     NDVI_path = glob.glob(os.path.join(curr_aux_folder, '*NDVI.tif'))[0]
-    glacier_mask_path = glob.glob(os.path.join(auxiliary_folder_path, '*glacier*.tif'))[0]
-    
+    if classify_glaciers == 'yes':
+        glacier_mask_path = glob.glob(os.path.join(auxiliary_folder_path, '*glacier*.tif'))[0]
+    else:
+        pass
+
     # Find the main bands file. Look for a VRT first; if not found, fallback to a TIF.
     bands_path_list = glob.glob(os.path.join(curr_acquisition, '*scf.vrt'))
     if bands_path_list == []:
         bands_path = [f for f in glob.glob(os.path.join(curr_acquisition, "PRS*.tif")) if 'PCA' not in f][0]
     else:
         bands_path = bands_path_list[0]
-        
+
     # Create valid mask from no_data_mask (True means valid)
     valid_mask = np.logical_not(no_data_mask)
-    
+
     # Load the image bands using your open_image and define_bands functions.
     bands = define_bands(open_image(bands_path)[0], valid_mask, sensor)
     # Expected band ordering: blue, red, nir, swir
     blue = bands['BLUE']
-    red  = bands['RED']
-    nir  = bands['NIR']
+    red = bands['RED']
+    nir = bands['NIR']
     swir = bands['SWIR']
-    
+
     # Load indices
     ndsi = open_image(NDSI_path)[0]
     ndvi = open_image(NDVI_path)[0]
-    
+
     # Load external masks for clouds, water and glaciers
-    cloud_mask   = open_image(path_cloud_mask)[0]
-    water_mask   = open_image(path_water_mask)[0]
-    glacier_mask = open_image(glacier_mask_path)[0]
-    
+    cloud_mask = open_image(path_cloud_mask)[0]
+    water_mask = open_image(path_water_mask)[0]
+    if classify_glaciers == 'yes':
+        glacier_mask = open_image(glacier_mask_path)[0]
+    else:
+        glacier_mask = np.zeros_like(water_mask)
+
     # Compute red/SWIR ratio (avoid division by zero)
     red_swir = red / (swir + 1e-10)
-    
+
     # Set a fixed NDSI threshold (candidate pixels) and a NDVI threshold to avoid vegetation
     ndsi_threshold = 0.4
     ndvi_threshold = 0.5
-    
+
     # Build candidate mask: valid pixels with sufficient NDSI and low NDVI.
     candidate_mask = valid_mask & (ndsi > ndsi_threshold) & (ndvi < ndvi_threshold)
-    
+
     # Compute dynamic red/SWIR threshold using Otsu's method on candidate pixels.
     if np.any(candidate_mask):
         red_swir_dynamic_threshold = threshold_otsu(red_swir[candidate_mask])
@@ -965,51 +987,43 @@ def thematic_map_classifier(curr_acquisition, curr_aux_folder, auxiliary_folder_
 
     # Swapped condition: Snow if red/SWIR ratio is lower than dynamic threshold, ice if higher.
     snow_mask = candidate_mask
-    
+
     # Glacier reclassification: only if classify_glaciers == 'yes' and date within glacier season.
-    if (classify_glaciers.lower() == 'yes' and 
-        (dt_start_glaciers_month.month <= date_time.month <= dt_end_glaciers_month.month)):
-        
-        
-        ice_mask  = np.logical_and.reduce((candidate_mask, red_swir <= red_swir_dynamic_threshold, glacier_mask == 1))
-        
+    if (classify_glaciers.lower() == 'yes' and
+            (dt_start_glaciers_month.month <= date_time.month <= dt_end_glaciers_month.month)):
+
+        ice_mask = np.logical_and.reduce((candidate_mask, red_swir <= red_swir_dynamic_threshold, glacier_mask == 1))
+
     else:
         ice_mask = np.zeros_like(snow_mask).astype('bool')
-       
-        
-        
-    
-    
+
     # Initialize the thematic map with snow free (0)
     thematic_map = np.zeros_like(blue, dtype=np.uint8)
     thematic_map[snow_mask] = 100
-    thematic_map[ice_mask]  = 215
-    
+    thematic_map[ice_mask] = 215
+
     # Mark invalid pixels as 255 (no-data, clouds, or water)
-    
+
     thematic_map[np.logical_not(valid_mask)] = 255
     # Optionally mark cloud and water areas with distinct codes:
     thematic_map[cloud_mask == 2] = 205
     thematic_map[water_mask == 1] = 210
-    
+
     if np.sum(np.logical_and(thematic_map == 100, glacier_mask == 0)) > np.sum(glacier_mask == 1):
-        
         thematic_map[thematic_map == 215] = 100
-    
-   
-    
+
     # Define output path
-    output_path = os.path.join(curr_acquisition, SVM_folder_name, 
+    output_path = os.path.join(curr_acquisition, SVM_folder_name,
                                os.path.basename(curr_acquisition) + '_simple_class.tif')
-    
+
     # Open one of the auxiliary rasters (e.g., cloud mask) to copy metadata
     with rasterio.open(path_cloud_mask) as src:
         meta = src.meta.copy()
     meta.update(dtype=rasterio.uint8, count=1)
-    
+
     # Save the modified raster
     with rasterio.open(output_path, 'w', **meta) as dst:
         dst.write(thematic_map, 1)
-    
+
     return output_path
 

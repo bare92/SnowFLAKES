@@ -14,6 +14,7 @@ import seaborn as sns
 import glob
 import os
 
+
 # Function to extract raster values within geometries
 def extract_raster_values(raster_path, geometries):
     """Extract raster values within geometries."""
@@ -28,6 +29,7 @@ def extract_raster_values(raster_path, geometries):
                 print(f"Error processing geometry: {e}")
                 values.append([])
     return values
+
 
 # Function to prepare data for boxplot
 def prepare_data(shapefile_path, raster_paths, class_field):
@@ -55,6 +57,7 @@ def prepare_data(shapefile_path, raster_paths, class_field):
                 data[raster_name].append((class_name, values))
 
     return data
+
 
 # Function to plot all boxplots in the same plot
 def plot_combined_boxplots(data):
@@ -87,16 +90,17 @@ def plot_combined_boxplots(data):
     plt.xticks(rotation=45)
     plt.tight_layout()
     plt.show()
-    
-    
+
+
 # Example usage
 if __name__ == "__main__":
     shapefile_path = "/mnt/CEPH_PROJECTS/PROSNOW/MRI_Andes/Landsat_Maipo/Landsat-9/LC09_L1TP_merged_20220413_20230422_02_T1/20220413_class_check_shapefile.shp"
     interest_names_list = ['NDSI', 'B8']
     names_to_exclude = ['plus', 'shadow_mask']
-    
+
     path_rasters = glob.glob(os.path.join(os.path.dirname(shapefile_path), '00*', '*'))
-    raster_paths = [f for f in path_rasters if any(name in f for name in interest_names_list) and not any(exclude in f for exclude in names_to_exclude)]
+    raster_paths = [f for f in path_rasters if any(name in f for name in interest_names_list) and not any(
+        exclude in f for exclude in names_to_exclude)]
 
     class_field = "class"  # Field in shapefile with class names
 

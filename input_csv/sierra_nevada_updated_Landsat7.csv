@@ -1,0 +1,65 @@
+Name,Value
+GENERAL,
+working_folder,/mnt/CEPH_PROJECTS/ALPSNOW/Katharina/scf_sierra_new
+Start Date,20160901
+End Date,20200531
+SVM_folder_name,Landsat7_svm_Kathi
+resolution,30
+no_data_value,-3.2768
+PCA,no
+Compute_clouds,yes
+classify_glaciers,no
+,
+AUXILIARY LAYERS,
+External_water_mask,
+External_Dem_path,
+,
+external_glacier_mask_path,
+glaciers_model_name,
+start_glaciers_month,1
+end_glaciers_month,4
+,
+External_cloud_mask_folder,
+Overwrite_cloud,0
+Cloud cover probability,0.6
+dilation_cloud_cover,6
+average_over,6
+,
+,
+,
+,
+,
+,
+Predefined_SVM_model,/mnt/CEPH_PROJECTS/ALPSNOW/Katharina/SCF_Sierra_Nevada/Landsat7_svm_Kathi/svm_model_L7_own_training.pkl
+Predefined_SVM_model_sun,/mnt/CEPH_PROJECTS/ALPSNOW/Nicola/SCF_code/L7_predefined/L7_Sun_SVM_model.p
+Predefined_SVM_model_shadow,/mnt/CEPH_PROJECTS/ALPSNOW/Nicola/SCF_code/L7_predefined/L7_Shadow_SVM_model.p
+,
+,
+,
+,
+,
+,
+remove_bad_dates,yes
+remove_cloud_treshold,0.8
+remove_no_data_percentage_trehsold,0.8
+remove_clud_perc_corr_trehsold,0.8
+No data percentage,0.8
+,
+Predefined_model,yes
+separated_model,no
+prefilter_trainin,yes
+,
+n_min,2
+n_max,10
+Min training class,5
+Nprocess,8
+,
+overwrite,yes
+Ancillary_folder,yes
+Extended_Output,no
+NCDF,no
+QL_genaration,no
+combined_vrt,no
+Correction,yes
+Quantification,0
+Glacier_flag,no
