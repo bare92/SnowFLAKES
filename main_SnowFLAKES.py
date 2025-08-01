@@ -5,8 +5,9 @@ Created on Mon Sep 16 14:59:20 2024
 
 @author: rbarella
 """
-
 import os
+import sys
+import json
 import pandas as pd
 import glob
 import logging
@@ -21,67 +22,61 @@ from xgboost_functions import *
 from shadow_mask_gen import *
 from scipy.ndimage import binary_dilation
 
-
 def main():
-    # Step 1: Load input data
-    # Define the path to the CSV file containing input parameters
-    # csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/maipo_S2.csv')
-    # csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/maipo_L8.csv')
-    # csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/maipo_L7.csv')
-    # csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/prisma_test.csv')
-    csv_path = os.path.join(
-        '/home/kscheidt/PycharmProjects/SnowFLAKES-main/input_csv/sierra_nevada_updated_Landsat8.csv')
+    # Step 1: Load input data from JSON
+    if len(sys.argv) != 2:
+        print("Usage: python run_scf.py path_to_config.json")
+        sys.exit(1)
 
-    input_data = pd.read_csv(csv_path)
+    json_path = sys.argv[1]
+    with open(json_path, 'r') as f:
+        input_data = json.load(f)
 
-    # Retrieve the working folder path from the input CSV file
-    working_folder = get_input_param(input_data, 'working_folder')
+    # Convert to dataframe-like object to keep get_input_param compatible if needed
+    input_data = {k: v for k, v in input_data.items()}  # Ensures keys are string-compatible
+
+    # Replace CSV-related code
+    # working_folder = get_input_param(input_data, 'working_folder')
+    working_folder = input_data['working_folder']
     create_empty_files(working_folder)
 
     scenes_to_skip = scenes_skip(working_folder)
     scenes_to_skip_clouds = cloud_mask_to_skip(working_folder)
 
-    # Step 2: Check satellite mission based on acquisition name
     print("Checking satellite mission...")
     acquisitions = sorted(os.listdir(working_folder))
-
-    # ensuring that skipped_scenes.log - if present from previous run - is not read as acquisition
-    # TODO: Ask Riccardo: Should skipped_scenes.log be removed, if still present from a previous run?
     if 'skipped_scenes.log' in acquisitions:
         acquisitions.remove('skipped_scenes.log')
 
     if not acquisitions:
         raise ValueError("No acquisitions found in the working folder.")
-    acquisition_name = acquisitions[-2]  # Use the first acquisition as a representative sample
+
+    acquisition_name = acquisitions[-2]
     sensor = get_sensor(acquisition_name)
 
-    # Step 3: Create auxiliary folder for storing permanent layers
     print("Creating auxiliary folder for static data...")
     auxiliary_folder_path = create_auxiliary_folder(working_folder)
 
-    # Step 4: Filter acquisitions by date range and sensor type
-    start_date = get_input_param(input_data, 'Start Date')
-    end_date = get_input_param(input_data, 'End Date')
+    start_date = input_data['Start Date']
+    end_date = input_data['End Date']
     print(f"Filtering acquisitions between {start_date} and {end_date}...")
     acquisitions_filtered = data_filter(start_date, end_date, working_folder, sensor, scenes_to_skip)
 
     if not acquisitions_filtered:
         raise ValueError("No acquisitions found for the selected date range and sensor.")
 
-    # Step 5: Retrieve the spatial resolution parameter
-    resolution = float(get_input_param(input_data, 'resolution'))
+    resolution = float(input_data['resolution'])
     print(f"Using resolution: {resolution}.")
 
-    # Step 5: Retrieve no data value
-    no_data_value = get_input_param(input_data, 'no_data_value')
-
-    if no_data_value == None or 'nan' in no_data_value:
+    no_data_value = input_data.get('no_data_value')
+    if no_data_value is None or 'nan' in str(no_data_value).lower():
         no_data_value = np.nan
-
     else:
         no_data_value = float(no_data_value)
 
     print(f"no data value: {no_data_value}.")
+
+   
 
     # Step 6: Generate VRT (Virtual Raster Table) files with stacked bands for selected acquisitions
     print("Creating VRT files...")
@@ -89,13 +84,15 @@ def main():
     if sensor != 'PRISMA':
         create_vrt_files(acquisitions_filtered, sensor, resolution)
         ref_img_path = glob.glob(acquisitions_filtered[0] + os.sep + "*scf.vrt")[0]
+        
         print("VRT creation process completed.")
 
     if sensor == 'PRISMA':
         ref_img_path = [f for f in glob.glob(acquisitions_filtered[0] + os.sep + "PRS*.tif") if 'PCA' not in f][0]
 
     # PCA
-    if get_input_param(input_data, 'PCA') == 'yes':
+    if input_data.get('PCA', 'no') == 'yes':
+
         perform_pca = True
 
     else:
@@ -103,63 +100,61 @@ def main():
 
     # Step 7: Generate water mask
     print("Generating water mask...")
-
+    
     vrt, img_info = open_image(ref_img_path)
 
-    # Check if an external water mask is provided, else generate a default water mask
-    External_water_mask_path = get_input_param(input_data, 'External_water_mask')
-    if External_water_mask_path is None:
+    external_water_mask_path = input_data.get('External_water_mask')
+    if not external_water_mask_path:
         water_mask_path = water_identifier(ref_img_path, auxiliary_folder_path)
     else:
-        water_mask_path = water_mask_cutting(External_water_mask_path, ref_img_path, auxiliary_folder_path)
+        water_mask_path = water_mask_cutting(external_water_mask_path, ref_img_path, auxiliary_folder_path)
 
     print(f"Water mask saved at {water_mask_path}")
 
     # Step 8: Generate glacier mask
     print("Generating glacier mask...")
-    classify_glaciers = get_input_param(input_data, 'classify_glaciers')
+    classify_glaciers = input_data.get('classify_glaciers', 'no')
     if classify_glaciers == 'yes':
-        external_glacier_mask_path = get_input_param(input_data, 'external_glacier_mask_path')
-        glaciers_model_svm = get_input_param(input_data, 'glaciers_model_name')
+        external_glacier_mask_path = input_data['external_glacier_mask_path']
+        glaciers_model_svm = input_data['glaciers_model_name']
         glaciers_mask_path = glacier_mask_cutting(external_glacier_mask_path, water_mask_path)
-        start_glaciers_month = get_input_param(input_data, 'start_glaciers_month')
-        end_glaciers_month = get_input_param(input_data, 'end_glaciers_month')
-        dt_start_glaciers_month = datetime(1900, int(start_glaciers_month), 1)
-        dt_end_glaciers_month = datetime(1900, int(end_glaciers_month), 1)
+
+        start_glaciers_month = int(input_data['start_glaciers_month'])
+        end_glaciers_month = int(input_data['end_glaciers_month'])
+
+        dt_start_glaciers_month = datetime(1900, start_glaciers_month, 1)
+        dt_end_glaciers_month = datetime(1900, end_glaciers_month, 1)
+
         print(f"Glacier mask saved at {glaciers_mask_path}")
     else:
         print("No glacier mask created.")
 
-    # Step 9: Download or crop DEM, and compute slope and aspect
+   # Step 9: Download or crop DEM, and compute slope and aspect
     subimage_extents = process_image(img_info)
     print("Extent computed...")
 
-    External_Dem_path = get_input_param(input_data, 'External_Dem_path')
-    if External_Dem_path is None:
+    external_dem_path = input_data.get('External_Dem_path')
+    if not external_dem_path:
         print("Preparing DEM download...")
         dem_path = dem_downloader(subimage_extents, ref_img_path, resolution, auxiliary_folder_path, buffer=0.02)
     else:
         print("Preparing DEM cropping...")
-        dem_path = crop_predefined_DEM(ref_img_path, External_Dem_path, auxiliary_folder_path, reproj_type='bilinear',
-                                       overwrite=False)
+        dem_path = crop_predefined_DEM(ref_img_path, external_dem_path, auxiliary_folder_path, reproj_type='bilinear', overwrite=False)
 
     slopePath, aspectPath = calc_slope_aspect(dem_path, auxiliary_folder_path, reproj_type='bilinear', overwrite=False)
 
     # Initialize an empty list to track scenes without cloud masks
     scenes_not_to_cloud_mask = []
 
-    SVM_folder_name = get_input_param(input_data, 'SVM_folder_name')
+    SVM_folder_name = input_data['SVM_folder_name']
     XGB_folder_name = SVM_folder_name + '_XGB'
 
     # Ensure the directory exists
     skipped_scenes_file = os.path.join(working_folder, "skipped_scenes.log")
-
-    # Create the file if it doesn't exist (optional)
     if not os.path.exists(skipped_scenes_file):
-        open(skipped_scenes_file, "w").close()  # Creates an empty file
+        open(skipped_scenes_file, "w").close()
 
-    # Process each acquisition
-    overwrite_scenes = get_input_param(input_data, 'overwrite')
+    overwrite_scenes = input_data.get('overwrite', 'no')
 
     for curr_acquisition in acquisitions_filtered:
         folder = curr_acquisition + os.sep + SVM_folder_name
@@ -207,12 +202,14 @@ def main():
         curr_aux_folder = create_auxiliary_folder(curr_acquisition, folder_name='00_auxiliary_folder_' + date)
 
         # Cloud Masking
-        Compute_clouds = get_input_param(input_data, 'Compute_clouds') == 'yes'
-        cloud_prob = float(get_input_param(input_data, 'Cloud cover probability'))
-        average_over = int(get_input_param(input_data, 'average_over'))
-        dilation_size = int(get_input_param(input_data, 'dilation_cloud_cover'))
-        overwrite_cloud = int(get_input_param(input_data, 'Overwrite_cloud'))
+        cloud_prob = float(input_data.get('Cloud cover probability', 60))
+        average_over = int(input_data.get('average_over', 3))
+        dilation_size = int(input_data.get('dilation_cloud_cover', 3))
+        overwrite_cloud = int(input_data.get('Overwrite_cloud', 0))
+
         path_cloud_mask = os.path.join(curr_aux_folder, os.path.basename(curr_acquisition) + '_cloud_Mask.tif')
+        Compute_clouds = input_data.get('Compute_clouds', 'no') == 'yes'
+
 
         # Generate cloud mask or use default if clouds are not computed
         if not Compute_clouds or date in scenes_to_skip_clouds:
@@ -223,10 +220,10 @@ def main():
                 create_default_cloud_mask(vrt[0, :, :], path_cloud_mask)
                 cloud_cover_percentage = 0
             elif sensor == 'S2':
-                cloud_prob = float(get_input_param(input_data, 'Cloud cover probability'))
-                average_over = int(get_input_param(input_data, 'average_over'))
-                dilation_size = int(get_input_param(input_data, 'dilation_cloud_cover'))
-                overwrite_cloud = int(get_input_param(input_data, 'Overwrite_cloud'))
+                cloud_prob = float(input_data.get('Cloud_cover_probability', 60))
+                average_over = int(input_data.get('average_over', 3))
+                dilation_size = int(input_data.get('dilation_cloud_cover', 3))
+                overwrite_cloud = int(input_data.get('Overwrite_cloud', 0))
                 stack_clouds_path = \
                 [os.path.join(curr_acquisition, f) for f in os.listdir(curr_acquisition) if 'cloud.vrt' in f][0]
                 cloud_mask_path, cloud_cover_percentage = S2_clouds_classifier(
@@ -290,10 +287,15 @@ def main():
         adiacency_indexes(curr_acquisition, curr_aux_folder, auxiliary_folder_path, no_data_mask, bands)
 
         # Step 10a: Collect training data and train the SVM model if no pretrained model exists
-        predefined_model = get_input_param(input_data, 'Predefined_model')
+        predefined_model = input_data.get('Predefined_model', 'no')
+
 
         if predefined_model == 'no':
-            if classify_glaciers == 'yes' and date_time.month >= dt_start_glaciers_month.month and date_time.month <= dt_end_glaciers_month.month:
+            if (classify_glaciers == 'yes' and
+                dt_start_glaciers_month is not None and
+                dt_end_glaciers_month is not None and
+                dt_start_glaciers_month.month <= date_time.month <= dt_end_glaciers_month.month):
+
                 with rasterio.open(glaciers_mask_path) as src:
                     glaciers_mask = src.read(1)  # Read the cloud mask (first band)
 
@@ -406,7 +408,11 @@ def main():
 
                 counter_to_exit += 1
 
-                if classify_glaciers == 'yes' and date_time.month >= dt_start_glaciers_month.month and date_time.month <= dt_end_glaciers_month.month:
+                if (classify_glaciers == 'yes' and
+                        dt_start_glaciers_month is not None and
+                        dt_end_glaciers_month is not None and
+                        dt_start_glaciers_month.month <= date_time.month <= dt_end_glaciers_month.month):
+
                     mask_raster_with_glacier(FSC_SVM_map_path, thematic_map_path, auxiliary_folder_path)
 
                 ## Glacier_classification
