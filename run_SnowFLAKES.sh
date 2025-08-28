@@ -10,7 +10,7 @@ conda activate snowmap
 
 # Define paths
 SCRIPT_PATH="./main_SnowFLAKES.py"
-CONFIG_PATH="./input_json/input_file.json"  # <-- Change this to your actual JSON path
+CONFIG_PATH="./input_json/maipo_S2.json"  # <-- Change this to your actual JSON path
 
 # Run the script
 echo "Running SnowFLAKES classification..."

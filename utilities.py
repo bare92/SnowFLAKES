@@ -18,6 +18,16 @@ from rasterio.warp import transform_bounds
 import time
 
 
+def is_month_in_range(month, start_month, end_month):
+    """
+    Check if a given month (1-12) is in the range [start_month, end_month],
+    supporting ranges that wrap around the year (e.g. October to April).
+    """
+    if start_month <= end_month:
+        return start_month <= month <= end_month
+    else:
+        return month >= start_month or month <= end_month
+
 def create_empty_files(working_folder):
     """
     Creates two empty text files in the specified folder if they don't already exist:
@@ -78,6 +88,7 @@ def data_filter(start_date, end_date, working_folder, sensor, scenes_to_skip):
         acquisitions_filtered = []
         for f in acquisitions:
             # Extract date for filtering
+            
             if os.path.basename(f).split('_')[1] == 'MSIL1C':
                 date = os.path.basename(f).split('_')[2].split('T')[0]
             elif os.path.basename(f).split('_')[1] == 'OPER':
@@ -297,9 +308,10 @@ def select_band_names(sensor, suffix):
     elif sensor == 'L7' and suffix == 'cloud':
         return ['B1', 'B2', 'B3', 'B4', 'B5', 'B6_VCID_1', 'B7']
     elif sensor == 'L8' and suffix == 'scf':
-        return ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8']
+        return ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7']
     elif sensor == 'L8' and suffix == 'scfT':
-        return ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B10', 'B11']
+        #return ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B10', 'B11']
+        return ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7']
     elif sensor == 'L8' and suffix == 'cloud':
         return ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B10']
     elif sensor == 'S2' and suffix == 'cloud':

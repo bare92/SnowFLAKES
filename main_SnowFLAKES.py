@@ -56,9 +56,10 @@ def main():
 
     print("Creating auxiliary folder for static data...")
     auxiliary_folder_path = create_auxiliary_folder(working_folder)
-
-    start_date = input_data['Start Date']
-    end_date = input_data['End Date']
+    
+    start_date = datetime.strptime(input_data['Start Date'], '%Y-%m-%d').strftime('%Y%m%d')
+    end_date = datetime.strptime(input_data['End Date'], '%Y-%m-%d').strftime('%Y%m%d')
+    
     print(f"Filtering acquisitions between {start_date} and {end_date}...")
     acquisitions_filtered = data_filter(start_date, end_date, working_folder, sensor, scenes_to_skip)
 
@@ -244,7 +245,7 @@ def main():
         # Compute spectral indices: NDVI, NDSI, band difference, and shadow index
         valid_mask = np.logical_not(no_data_mask)
 
-        if np.sum(no_data_mask) / len(valid_mask.flatten()) > 1 or cloud_perc_corr > 0.5:
+        if np.sum(no_data_mask) / len(valid_mask.flatten()) > 1 or cloud_perc_corr > 0.6:
             print('TOO MANY INVALID PIXELS...')
             continue
 
@@ -294,7 +295,7 @@ def main():
             if (classify_glaciers == 'yes' and
                 dt_start_glaciers_month is not None and
                 dt_end_glaciers_month is not None and
-                dt_start_glaciers_month.month <= date_time.month <= dt_end_glaciers_month.month):
+                is_month_in_range(date_time.month, dt_start_glaciers_month.month, dt_end_glaciers_month.month)):
 
                 with rasterio.open(glaciers_mask_path) as src:
                     glaciers_mask = src.read(1)  # Read the cloud mask (first band)
@@ -409,9 +410,9 @@ def main():
                 counter_to_exit += 1
 
                 if (classify_glaciers == 'yes' and
-                        dt_start_glaciers_month is not None and
-                        dt_end_glaciers_month is not None and
-                        dt_start_glaciers_month.month <= date_time.month <= dt_end_glaciers_month.month):
+                    dt_start_glaciers_month is not None and
+                    dt_end_glaciers_month is not None and
+                    is_month_in_range(date_time.month, dt_start_glaciers_month.month, dt_end_glaciers_month.month)):
 
                     mask_raster_with_glacier(FSC_SVM_map_path, thematic_map_path, auxiliary_folder_path)
 

@@ -990,13 +990,15 @@ def thematic_map_classifier(curr_acquisition, curr_aux_folder, auxiliary_folder_
 
     # Glacier reclassification: only if classify_glaciers == 'yes' and date within glacier season.
  # Glacier reclassification: only if classify_glaciers == 'yes' and date within glacier season.
+    # Glacier reclassification: only if classify_glaciers == 'yes' and date within glacier season.
     if (classify_glaciers.lower() == 'yes' and
-            dt_start_glaciers_month is not None and dt_end_glaciers_month is not None and
-            dt_start_glaciers_month.month <= date_time.month <= dt_end_glaciers_month.month):
+        dt_start_glaciers_month is not None and dt_end_glaciers_month is not None and
+        is_month_in_range(date_time.month, dt_start_glaciers_month.month, dt_end_glaciers_month.month)):
 
         ice_mask = np.logical_and.reduce((candidate_mask, red_swir <= red_swir_dynamic_threshold, glacier_mask == 1))
     else:
         ice_mask = np.zeros_like(snow_mask).astype('bool')
+
 
 
     # Initialize the thematic map with snow free (0)
