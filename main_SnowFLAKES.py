@@ -30,7 +30,7 @@ def main():
     # csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/maipo_L7.csv')
     # csv_path = os.path.join('/mnt/CEPH_PROJECTS/ALPSNOW/Riccardo/SnowFLAKES/input_csv/prisma_test.csv')
     csv_path = os.path.join(
-        '/home/kscheidt/PycharmProjects/SnowFLAKES-main/input_csv/sierra_nevada_updated_Landsat8.csv')
+        '/home/kscheidt/PycharmProjects/SnowFLAKES/input_csv/SCF_test_Valentina.csv')
 
     input_data = pd.read_csv(csv_path)
 
@@ -44,15 +44,23 @@ def main():
     # Step 2: Check satellite mission based on acquisition name
     print("Checking satellite mission...")
     acquisitions = sorted(os.listdir(working_folder))
+    print(acquisitions)
 
     # ensuring that skipped_scenes.log - if present from previous run - is not read as acquisition
     # TODO: Ask Riccardo: Should skipped_scenes.log be removed, if still present from a previous run?
     if 'skipped_scenes.log' in acquisitions:
         acquisitions.remove('skipped_scenes.log')
+    if '00_scenes_to_skip.txt' in acquisitions:
+        acquisitions.remove('00_scenes_to_skip.txt')
+    if '00_skip_cloud_masks.txt' in acquisitions:
+        acquisitions.remove('00_skip_cloud_masks.txt')
+    if '01_TEST_auxiliary_folder' in acquisitions:
+        acquisitions.remove('01_TEST_auxiliary_folder')
 
     if not acquisitions:
         raise ValueError("No acquisitions found in the working folder.")
-    acquisition_name = acquisitions[-2]  # Use the first acquisition as a representative sample
+    acquisition_name = acquisitions[0]  # Use the first acquisition as a representative sample
+
     sensor = get_sensor(acquisition_name)
 
     # Step 3: Create auxiliary folder for storing permanent layers
